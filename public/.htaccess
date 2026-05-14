@@ -1,0 +1,19 @@
+RewriteEngine On
+DirectoryIndex index.html index.php
+
+# Do not cache JSON API responses (avoids stale GET /api/* behind CDNs and aggressive proxies).
+# Requires mod_headers (enabled on most Apache shared hosts; harmless no-op if absent).
+<IfModule mod_headers.c>
+  SetEnvIf Request_URI /api/ tt_api_request=1
+  Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0" env=tt_api_request
+  Header set Pragma "no-cache" env=tt_api_request
+</IfModule>
+
+# JSON API
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^ index.php [QSA,L]
+
+# SPA (after `npm run build` from /frontend with outDir ../public)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

@@ -1,0 +1,10 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "testTrove",
+            "database": "${workspaceFolder:TestTrove}/storage/app.sqlite"
+        }
+    ]
+}

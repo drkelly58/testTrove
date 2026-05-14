@@ -1,0 +1,7 @@
+/vendor/
+/node_modules/
+/frontend/dist/
+.env
+/storage/*.sqlite
+/storage/*.sqlite-journal
+.DS_Store

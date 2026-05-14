@@ -1,0 +1,57 @@
+TestTrove — local and shared-hosting setup
+==========================================
+
+Requirements
+------------
+- PHP 8.1+ with extensions: json, mbstring
+- PDO driver for your database (enable one or more):
+  - ext-pdo_sqlite — SQLite
+  - ext-pdo_mysql — MySQL / MariaDB
+  - ext-pdo_pgsql — PostgreSQL
+- Apache with mod_rewrite, or nginx with equivalent rules
+- Composer (https://getcomposer.org)
+- Node 20+ for building the Vue UI (production only needs the built files in /public)
+
+Database
+--------
+Set `DB_DRIVER` in `.env` to `sqlite`, `mysql`, or `pgsql` (aliases: `mariadb`, `postgres`, `postgresql`).
+
+- **SQLite** — default. Set `DB_PATH` (file path). Schemas: `database/schema.sqlite.sql`.
+- **MySQL / MariaDB** — set `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`. Optional `DB_SOCKET` instead of host/port. Requires MySQL 8.0.16+ for CHECK constraints. Schema: `database/schema.mysql.sql`.
+- **PostgreSQL** — same host/port/database/user/password vars as MySQL except default port `5432`. Schema: `database/schema.pgsql.sql`.
+
+Create an empty database (MySQL/PostgreSQL) first, then run the app once so migrations apply (`CREATE TABLE IF NOT EXISTS` / indexes).
+
+Backend
+-------
+  cd /path/to/TestTrove
+  cp .env.example .env
+  # Edit .env for DB_DRIVER and connection settings
+  # Optional: set APP_SEED=1 in .env once to insert demo project/suite/case on empty DB
+  composer install
+
+The API lives in public/index.php.
+
+Frontend (development)
+----------------------
+  cd frontend
+  npm install
+  npm run dev
+By default Vite proxies /api to http://127.0.0.1 (port 80), e.g. system Apache with DocumentRoot set to this repo's public/ folder.
+
+If nothing listens on port 80, use the PHP built-in server on 8080 instead:
+
+  VITE_API_PROXY_TARGET=http://127.0.0.1:8080 npm run dev
+
+  cd /path/to/TestTrove
+  php -S 127.0.0.1:8080 -t public public/router.php
+
+Frontend (production build)
+----------------------------
+  cd frontend
+  npm run build
+This writes index.html and /public/assets/* without deleting public/index.php (emptyOutDir: false).
+
+Apache document root should be the "public" folder. Sample vhost: `deploy/apache/testtrove-vhost.conf` (adjust paths). The included `.htaccess` routes /api/* to index.php and client routes to index.html.
+
+Security note: this scaffold has no authentication yet. On shared hosting, protect /storage and add auth before real data.
