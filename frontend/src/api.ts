@@ -1,5 +1,10 @@
 const base = '';
 
+/** Include session cookie for OAuth-backed API authentication. */
+export function apiFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, { credentials: 'include', ...init });
+}
+
 /** Ask for JSON responses (Slim error handler) and send JSON bodies. */
 const jsonWriteHeaders: Record<string, string> = {
   'Content-Type': 'application/json',
@@ -82,13 +87,13 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${base}/api/projects`);
+  const res = await apiFetch(`${base}/api/projects`);
   const data = await parseJson<{ data: Project[] }>(res);
   return data.data;
 }
 
 export async function createProject(name: string, description?: string): Promise<{ id: number }> {
-  const res = await fetch(`${base}/api/projects`, {
+  const res = await apiFetch(`${base}/api/projects`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify({ name, description }),
@@ -101,7 +106,7 @@ export async function updateProject(
   projectId: number,
   body: { name?: string; description?: string | null },
 ): Promise<Project> {
-  const res = await fetch(`${base}/api/projects/${projectId}`, {
+  const res = await apiFetch(`${base}/api/projects/${projectId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -152,7 +157,7 @@ export async function deleteProject(
   opts?: { dryRun?: boolean },
 ): Promise<DeleteResult<ProjectDeleteCascade, { project: { id: number; name: string } }>> {
   const url = `${base}/api/projects/${projectId}${opts?.dryRun ? '?dry_run=1' : ''}`;
-  const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const res = await apiFetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const data = await parseJson<{
     data: DeleteResult<ProjectDeleteCascade, { project: { id: number; name: string } }>;
   }>(res);
@@ -165,7 +170,7 @@ export async function deleteSuite(
   opts?: { dryRun?: boolean },
 ): Promise<DeleteResult<SuiteDeleteCascade, { suite: { id: number; project_id: number; name: string } }>> {
   const url = `${base}/api/projects/${projectId}/suites/${suiteId}${opts?.dryRun ? '?dry_run=1' : ''}`;
-  const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const res = await apiFetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const data = await parseJson<{
     data: DeleteResult<SuiteDeleteCascade, { suite: { id: number; project_id: number; name: string } }>;
   }>(res);
@@ -178,7 +183,7 @@ export async function deleteCase(
   opts?: { dryRun?: boolean },
 ): Promise<DeleteResult<CaseDeleteCascade, { case: { id: number; suite_id: number; title: string } }>> {
   const url = `${base}/api/suites/${suiteId}/cases/${caseId}${opts?.dryRun ? '?dry_run=1' : ''}`;
-  const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const res = await apiFetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const data = await parseJson<{
     data: DeleteResult<CaseDeleteCascade, { case: { id: number; suite_id: number; title: string } }>;
   }>(res);
@@ -191,7 +196,7 @@ export async function deleteSection(
   opts?: { dryRun?: boolean },
 ): Promise<DeleteResult<SectionDeleteCascade, { section: { id: number; suite_id: number; name: string } }>> {
   const url = `${base}/api/suites/${suiteId}/sections/${sectionId}${opts?.dryRun ? '?dry_run=1' : ''}`;
-  const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const res = await apiFetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const data = await parseJson<{
     data: DeleteResult<SectionDeleteCascade, { section: { id: number; suite_id: number; name: string } }>;
   }>(res);
@@ -203,7 +208,7 @@ export async function deleteRun(
   opts?: { dryRun?: boolean },
 ): Promise<DeleteResult<RunDeleteCascade, { run: { id: number; project_id: number; name: string } }>> {
   const url = `${base}/api/runs/${runId}${opts?.dryRun ? '?dry_run=1' : ''}`;
-  const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const res = await apiFetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const data = await parseJson<{
     data: DeleteResult<RunDeleteCascade, { run: { id: number; project_id: number; name: string } }>;
   }>(res);
@@ -211,13 +216,13 @@ export async function deleteRun(
 }
 
 export async function fetchSuites(projectId: number): Promise<Suite[]> {
-  const res = await fetch(`${base}/api/projects/${projectId}/suites`);
+  const res = await apiFetch(`${base}/api/projects/${projectId}/suites`);
   const data = await parseJson<{ data: Suite[] }>(res);
   return data.data;
 }
 
 export async function fetchSections(suiteId: number): Promise<Section[]> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/sections`);
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/sections`);
   const data = await parseJson<{ data: Section[] }>(res);
   return data.data;
 }
@@ -226,7 +231,7 @@ export async function createSection(
   suiteId: number,
   body: { name: string; precondition?: string | null; sort_order?: number },
 ): Promise<{ id: number; suite_id: number; name: string }> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/sections`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/sections`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -240,7 +245,7 @@ export async function updateSection(
   sectionId: number,
   body: { name?: string; precondition?: string | null; sort_order?: number },
 ): Promise<Section> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/sections/${sectionId}`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/sections/${sectionId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -250,7 +255,7 @@ export async function updateSection(
 }
 
 export async function createSuite(projectId: number, name: string): Promise<{ id: number }> {
-  const res = await fetch(`${base}/api/projects/${projectId}/suites`, {
+  const res = await apiFetch(`${base}/api/projects/${projectId}/suites`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify({ name }),
@@ -264,7 +269,7 @@ export async function updateSuite(
   suiteId: number,
   body: { name?: string },
 ): Promise<Suite> {
-  const res = await fetch(`${base}/api/projects/${projectId}/suites/${suiteId}`, {
+  const res = await apiFetch(`${base}/api/projects/${projectId}/suites/${suiteId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -277,7 +282,7 @@ export async function duplicateSuite(
   projectId: number,
   suiteId: number,
 ): Promise<{ id: number; name: string; cases_copied: number }> {
-  const res = await fetch(`${base}/api/projects/${projectId}/suites/${suiteId}/duplicate`, {
+  const res = await apiFetch(`${base}/api/projects/${projectId}/suites/${suiteId}/duplicate`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: '{}',
@@ -287,7 +292,7 @@ export async function duplicateSuite(
 }
 
 export async function fetchCases(suiteId: number): Promise<TestCase[]> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases`);
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases`);
   const data = await parseJson<{ data: TestCase[] }>(res);
   return data.data;
 }
@@ -346,7 +351,7 @@ export type RunItemDetail = {
 };
 
 export async function fetchProjectRuns(projectId: number): Promise<RunSummary[]> {
-  const res = await fetch(`${base}/api/projects/${projectId}/runs`);
+  const res = await apiFetch(`${base}/api/projects/${projectId}/runs`);
   const data = await parseJson<{ data: RunSummary[] }>(res);
   return data.data;
 }
@@ -365,7 +370,7 @@ export async function createRunFromSuite(
   state: string;
   case_count: number;
 }> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/runs`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/runs`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(name ? { name } : {}),
@@ -405,7 +410,7 @@ export async function createRunFromSection(
   state: string;
   case_count: number;
 }> {
-  const res = await fetch(`${base}/api/sections/${sectionId}/runs`, {
+  const res = await apiFetch(`${base}/api/sections/${sectionId}/runs`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(name ? { name } : {}),
@@ -427,7 +432,7 @@ export async function createRunFromSection(
 }
 
 export async function fetchRun(runId: number): Promise<{ run: RunDetail; items: RunItemDetail[] }> {
-  const res = await fetch(`${base}/api/runs/${runId}`);
+  const res = await apiFetch(`${base}/api/runs/${runId}`);
   const data = await parseJson<{ data: { run: RunDetail; items: RunItemDetail[] } }>(res);
   return data.data;
 }
@@ -436,7 +441,7 @@ export async function updateRun(
   runId: number,
   body: { name?: string; state?: 'open' | 'locked' | 'archived' },
 ): Promise<RunDetail> {
-  const res = await fetch(`${base}/api/runs/${runId}`, {
+  const res = await apiFetch(`${base}/api/runs/${runId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -465,7 +470,7 @@ export async function updateRunItem(
   video_url: string | null;
   executed_at: string | null;
 }> {
-  const res = await fetch(`${base}/api/runs/${runId}/items/${itemId}`, {
+  const res = await apiFetch(`${base}/api/runs/${runId}/items/${itemId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -497,7 +502,7 @@ export async function createCase(
     status?: string;
   },
 ): Promise<{ id: number }> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(payload),
@@ -518,7 +523,7 @@ export async function updateCase(
     status?: string;
   },
 ): Promise<{ id: number }> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases/${caseId}`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases/${caseId}`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(payload),
@@ -539,7 +544,7 @@ export async function bulkSetCasesStatus(
   suiteId: number,
   body: { status: CaseWorkflowStatus; case_ids: number[] } | { status: CaseWorkflowStatus; section_id: number },
 ): Promise<BulkCaseStatusResult> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases/bulk-status`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases/bulk-status`, {
     method: 'PATCH',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -549,7 +554,7 @@ export async function bulkSetCasesStatus(
 }
 
 export async function duplicateCase(suiteId: number, caseId: number): Promise<{ id: number; title: string }> {
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases/${caseId}/duplicate`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases/${caseId}/duplicate`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: '{}',
@@ -564,7 +569,7 @@ export async function moveCaseToSuite(
   caseId: number,
   targetSuiteId: number,
 ): Promise<{ id: number; suite_id: number }> {
-  const res = await fetch(`${base}/api/suites/${fromSuiteId}/cases/${caseId}/move`, {
+  const res = await apiFetch(`${base}/api/suites/${fromSuiteId}/cases/${caseId}/move`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify({ target_suite_id: targetSuiteId }),
@@ -591,7 +596,7 @@ export async function moveStepBetweenCases(
   if (insertAt !== undefined && insertAt !== null) {
     body.insert_at = insertAt;
   }
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases/${fromCaseId}/steps/move`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases/${fromCaseId}/steps/move`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
@@ -654,7 +659,7 @@ export async function workspaceCsvPreview(file: File): Promise<{
 }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${base}/api/workspace/csv-preview`, {
+  const res = await apiFetch(`${base}/api/workspace/csv-preview`, {
     method: 'POST',
     body: form,
   });
@@ -710,7 +715,7 @@ export async function workspaceImport(
     payload.column_map = options.column_map;
   }
   form.append('options', JSON.stringify(payload));
-  const res = await fetch(`${base}/api/workspace/import`, {
+  const res = await apiFetch(`${base}/api/workspace/import`, {
     method: 'POST',
     body: form,
   });
@@ -753,7 +758,7 @@ export async function workspaceImport(
 export async function importCasesFile(suiteId: number, file: File): Promise<{ imported: number }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${base}/api/suites/${suiteId}/cases/import`, {
+  const res = await apiFetch(`${base}/api/suites/${suiteId}/cases/import`, {
     method: 'POST',
     body: form,
   });

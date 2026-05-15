@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, provide, ref } from 'vue';
-import { RouterView } from 'vue-router';
+import { RouterLink, RouterView, useRouter } from 'vue-router';
+import { apiFetch, createProject } from '@/api';
+import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import IconButton from '@/components/IconButton.vue';
-import { createProject } from '@/api';
 import {
   PROJECT_CONTEXT_KEY,
   projectContextForProvide,
@@ -21,9 +22,38 @@ const newProjectName = ref('');
 const newProjectBusy = ref(false);
 const newProjectError = ref<string | null>(null);
 
+const router = useRouter();
+const authSession = ref<AuthSessionPayload | null>(null);
+const logoutBusy = ref(false);
+
 onMounted(() => {
-  void refreshProjects();
+  void (async () => {
+    try {
+      authSession.value = await loadAuthSession(true);
+    } catch {
+      authSession.value = null;
+    }
+    const s = authSession.value;
+    if (!s?.auth_required || s.user) {
+      void refreshProjects();
+    }
+  })();
 });
+
+async function logout() {
+  if (logoutBusy.value) {
+    return;
+  }
+  logoutBusy.value = true;
+  try {
+    await apiFetch('/api/auth/logout', { method: 'POST', headers: { Accept: 'application/json' } });
+    clearAuthSessionCache();
+    await router.push('/login');
+    authSession.value = await loadAuthSession(true);
+  } finally {
+    logoutBusy.value = false;
+  }
+}
 
 function onProjectSelect(ev: Event) {
   const raw = (ev.target as HTMLSelectElement).value;
@@ -166,6 +196,25 @@ async function submitNewProject() {
       <nav class="nav">
         <RouterLink to="/" class="nav-link">Workspace</RouterLink>
         <RouterLink to="/runs" class="nav-link">Runs</RouterLink>
+        <RouterLink
+          v-if="authSession?.auth_required && !authSession?.user"
+          to="/login"
+          class="nav-link"
+        >
+          Sign in
+        </RouterLink>
+        <span v-if="authSession?.user" class="nav-user" :title="authSession.user.email">
+          {{ authSession.user.display_name }}
+        </span>
+        <button
+          v-if="authSession?.user"
+          type="button"
+          class="nav-link nav-logout"
+          :disabled="logoutBusy"
+          @click="logout"
+        >
+          Sign out
+        </button>
         <RouterLink
           to="/settings"
           class="nav-link nav-gear"
@@ -369,6 +418,28 @@ a {
 .nav {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+}
+
+.nav-user {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-logout {
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.nav-logout:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .nav-link {

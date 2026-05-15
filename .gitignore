@@ -4,4 +4,5 @@
 .env
 /storage/*.sqlite
 /storage/*.sqlite-journal
+/storage/sessions/*
 .DS_Store

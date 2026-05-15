@@ -9,6 +9,9 @@ use Slim\Psr7\Response;
 
 final class JsonResponse
 {
+    /** Sent on every JSON body so caches cannot serve stale API data if .htaccess headers are absent (nginx, some proxies). */
+    private const JSON_CACHE_CONTROL = 'no-store, no-cache, must-revalidate, max-age=0';
+
     public static function encode(ResponseInterface $response, mixed $data, int $status = 200): ResponseInterface
     {
         $flags = JSON_UNESCAPED_UNICODE;
@@ -19,7 +22,11 @@ final class JsonResponse
         if ($body === false) {
             $body = '{"error":"response encoding failed"}';
         }
-        $response = $response->withHeader('Content-Type', 'application/json; charset=utf-8')->withStatus($status);
+        $response = $response
+            ->withHeader('Content-Type', 'application/json; charset=utf-8')
+            ->withHeader('Cache-Control', self::JSON_CACHE_CONTROL)
+            ->withHeader('Pragma', 'no-cache')
+            ->withStatus($status);
         $response->getBody()->write($body);
         return $response;
     }

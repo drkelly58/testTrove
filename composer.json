@@ -4,8 +4,12 @@
   "type": "project",
   "require": {
     "php": "^8.1",
-    "slim/slim": "^4.12",
+    "league/oauth2-client": "^2.7",
+    "league/oauth2-github": "^3.1",
+    "league/oauth2-google": "^5.0",
     "slim/psr7": "^1.7",
+    "slim/slim": "^4.12",
+    "thenetworg/oauth2-azure": "^2.2",
     "vlucas/phpdotenv": "^5.6"
   },
   "autoload": {

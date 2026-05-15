@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Auth\AuthSettings;
+use App\Controllers\AuthController;
 use App\Controllers\CaseController;
 use App\Controllers\ProjectController;
 use App\Controllers\RunController;
@@ -11,6 +13,8 @@ use App\Controllers\WorkspaceExchangeController;
 use App\Database;
 use App\JsonResponse;
 use App\Middleware\CorsMiddleware;
+use App\Middleware\RequireAuthMiddleware;
+use App\Middleware\SessionMiddleware;
 use Dotenv\Dotenv;
 use Slim\Error\Renderers\JsonErrorRenderer;
 use Slim\Factory\AppFactory;
@@ -63,8 +67,17 @@ if ($errorHandler instanceof ErrorHandler) {
     $errorHandler->setDefaultErrorRenderer('application/json', JsonErrorRenderer::class);
 }
 
+$authSettings = AuthSettings::fromGlobals($_ENV);
 $corsOrigin = $_ENV['CORS_ORIGIN'] ?? null;
+$app->add(new RequireAuthMiddleware($authSettings));
+$app->add(new SessionMiddleware($root));
 $app->add(new CorsMiddleware($corsOrigin));
+
+$auth = new AuthController($pdo, $authSettings);
+$app->get('/api/auth/session', [$auth, 'session']);
+$app->get('/api/auth/login/{provider}', [$auth, 'login']);
+$app->get('/api/auth/callback/{provider}', [$auth, 'callback']);
+$app->post('/api/auth/logout', [$auth, 'logout']);
 
 $projects = new ProjectController($pdo);
 $suites = new SuiteController($pdo);

@@ -124,6 +124,7 @@ final class Database
             self::runItemSeverityMigrations($pdo, $driver);
             self::runItemScreenshotsMigrations($pdo, $driver);
             self::testCaseStepsRelationalMigrations($pdo, $driver);
+            self::oauthIdentityMigrations($pdo, $driver);
 
             return;
         }
@@ -134,6 +135,80 @@ final class Database
         self::runItemSeverityMigrations($pdo, $driver);
         self::runItemScreenshotsMigrations($pdo, $driver);
         self::testCaseStepsRelationalMigrations($pdo, $driver);
+        self::oauthIdentityMigrations($pdo, $driver);
+    }
+
+    /**
+     * OAuth columns on users + optional nullable password_hash (MySQL / PostgreSQL).
+     */
+    private static function oauthIdentityMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+
+        if ($driver === 'sqlite') {
+            try {
+                $pdo->exec('ALTER TABLE users ADD COLUMN oauth_provider TEXT');
+            } catch (PDOException $e) {
+                $m = strtolower($e->getMessage());
+                if (!str_contains($m, 'duplicate column')) {
+                    throw $e;
+                }
+            }
+            try {
+                $pdo->exec('ALTER TABLE users ADD COLUMN oauth_subject TEXT');
+            } catch (PDOException $e) {
+                $m = strtolower($e->getMessage());
+                if (!str_contains($m, 'duplicate column')) {
+                    throw $e;
+                }
+            }
+            try {
+                $pdo->exec('ALTER TABLE users ADD COLUMN picture_url TEXT');
+            } catch (PDOException $e) {
+                $m = strtolower($e->getMessage());
+                if (!str_contains($m, 'duplicate column')) {
+                    throw $e;
+                }
+            }
+            $pdo->exec(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_oauth ON users(oauth_provider, oauth_subject)
+                 WHERE oauth_provider IS NOT NULL AND oauth_subject IS NOT NULL'
+            );
+
+            return;
+        }
+
+        if ($driver === 'mysql') {
+            self::safeExec($pdo, 'ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(32) NULL', ['duplicate column']);
+            self::safeExec($pdo, 'ALTER TABLE users ADD COLUMN oauth_subject VARCHAR(255) NULL', ['duplicate column']);
+            self::safeExec($pdo, 'ALTER TABLE users ADD COLUMN picture_url TEXT NULL', ['duplicate column']);
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE users MODIFY password_hash VARCHAR(255) NULL',
+                ['duplicate', 'unknown column', 'check that column exists'],
+            );
+            self::safeExec(
+                $pdo,
+                'CREATE UNIQUE INDEX uniq_users_oauth ON users (oauth_provider, oauth_subject)',
+                ['duplicate', 'already exists'],
+            );
+
+            return;
+        }
+
+        if ($driver === 'pgsql') {
+            $pdo->exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(32)');
+            $pdo->exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_subject VARCHAR(255)');
+            $pdo->exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS picture_url TEXT');
+            $pdo->exec('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL');
+            self::safeExec(
+                $pdo,
+                'CREATE UNIQUE INDEX uniq_users_oauth ON users (oauth_provider, oauth_subject)',
+                ['already exists', 'duplicate'],
+            );
+        }
     }
 
     /**

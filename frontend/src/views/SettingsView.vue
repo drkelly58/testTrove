@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue';
 import {
+  apiFetch,
   fetchSuites,
   projectExportUrl,
   workspaceCsvPreview,
@@ -197,7 +198,7 @@ async function onImportFile(ev: Event) {
 }
 
 async function downloadExportFile(url: string, fallbackName: string) {
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (res.status === 501) {
     const j = (await res.json()) as { error?: string };
     throw new Error(j.error ?? 'Export not available.');
