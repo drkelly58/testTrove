@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { fetchRun, type RunDetail, type RunItemDetail, type RunItemSeverity, type TestStep } from '@/api';
+import { runOverviewSingleExpand, setRunOverviewSingleExpand } from '@/uiPreferences';
 
 const route = useRoute();
 
@@ -93,9 +94,21 @@ function toggleExpand(id: number) {
   if (next.has(id)) {
     next.delete(id);
   } else {
+    if (runOverviewSingleExpand.value) {
+      next.clear();
+    }
     next.add(id);
   }
   expanded.value = next;
+}
+
+function onSingleExpandPrefChange(ev: Event) {
+  const checked = (ev.target as HTMLInputElement).checked;
+  setRunOverviewSingleExpand(checked);
+  if (checked && expanded.value.size > 1) {
+    const ids = [...expanded.value];
+    expanded.value = new Set([ids[ids.length - 1]!]);
+  }
 }
 
 function isExpanded(id: number): boolean {
@@ -117,12 +130,35 @@ function stepsSummary(steps: TestStep[]): string {
 
 function severityLabel(s: RunItemSeverity): string {
   if (s === 'breaking') {
-    return 'Breaking';
+    return 'Breaking (blocks ship / core path)';
   }
   if (s === 'ui_only') {
     return 'UI only';
   }
   return 'Unclear';
+}
+
+function resultLabel(result: string): string {
+  switch (result) {
+    case 'pass':
+      return 'Pass';
+    case 'fail':
+      return 'Fail';
+    case 'blocked':
+      return 'Blocked';
+    case 'skipped':
+      return 'Skipped';
+    default:
+      return 'Untested';
+  }
+}
+
+function showFailureDetails(item: RunItemDetail): boolean {
+  return (
+    item.result === 'fail' ||
+    evidenceShots(item).length > 0 ||
+    Boolean(item.video_url?.trim())
+  );
 }
 
 function formatWhen(iso: string | null): string {
@@ -202,7 +238,17 @@ function evidenceShots(item: RunItemDetail): string[] {
           </div>
         </section>
 
-        <h2 class="list-heading">Cases</h2>
+        <div class="list-toolbar">
+          <h2 class="list-heading">Cases</h2>
+          <label class="pref-toggle" title="Remembered in this browser">
+            <input
+              type="checkbox"
+              :checked="runOverviewSingleExpand"
+              @change="onSingleExpandPrefChange"
+            />
+            <span>Only one case open at a time</span>
+          </label>
+        </div>
         <div class="items-scroll">
           <template v-for="group in sectionGroups" :key="group.name + '-' + (group.items[0]?.id ?? '')">
             <h3 class="section-heading">{{ group.name }}</h3>
@@ -222,50 +268,75 @@ function evidenceShots(item: RunItemDetail): string[] {
               </button>
 
               <div v-if="isExpanded(item.id)" class="item-body">
-                <dl class="meta-grid">
-                  <div>
-                    <dt>Severity</dt>
-                    <dd>{{ severityLabel(item.severity) }}</dd>
-                  </div>
-                  <div>
-                    <dt>Executed</dt>
-                    <dd>{{ formatWhen(item.executed_at) }}</dd>
-                  </div>
-                  <div>
-                    <dt>Priority</dt>
-                    <dd>{{ item.priority }}</dd>
-                  </div>
-                </dl>
-                <p v-if="item.precondition" class="pre">
-                  <strong>Precondition:</strong> {{ item.precondition }}
-                </p>
-                <div v-if="item.notes" class="notes-block">
+                <section class="detail-section" aria-label="Run outcome">
+                  <div class="lbl">Result</div>
+                  <dl class="meta-grid outcome-grid">
+                    <div>
+                      <dt>Outcome</dt>
+                      <dd>
+                        <span class="pill inline" :class="'r-' + item.result">{{ resultLabel(item.result) }}</span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Executed</dt>
+                      <dd>{{ formatWhen(item.executed_at) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Priority</dt>
+                      <dd>{{ item.priority }}</dd>
+                    </div>
+                    <div>
+                      <dt>Case status</dt>
+                      <dd>{{ item.status }}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="detail-section" aria-label="Notes">
                   <div class="lbl">Notes</div>
-                  <p class="notes-text">{{ item.notes }}</p>
-                </div>
-                <div v-if="evidenceShots(item).length || item.video_url" class="evidence">
-                  <div v-if="evidenceShots(item).length" class="ev-block">
-                    <div class="lbl">Screenshots</div>
-                    <ul class="ev-links">
-                      <li v-for="(url, idx) in evidenceShots(item)" :key="idx">
-                        <a :href="url" target="_blank" rel="noopener noreferrer" @click.stop>Open screenshot {{ idx + 1 }}</a>
-                      </li>
-                    </ul>
+                  <p class="notes-text" :class="{ empty: !item.notes?.trim() }">
+                    {{ item.notes?.trim() ? item.notes : 'No notes recorded.' }}
+                  </p>
+                </section>
+
+                <section v-if="showFailureDetails(item)" class="detail-section" aria-label="Failure details">
+                  <div class="lbl">Failure details</div>
+                  <dl v-if="item.result === 'fail'" class="meta-grid">
+                    <div>
+                      <dt>Failure impact</dt>
+                      <dd>{{ severityLabel(item.severity) }}</dd>
+                    </div>
+                  </dl>
+                  <div v-if="evidenceShots(item).length || item.video_url" class="evidence">
+                    <div v-if="evidenceShots(item).length" class="ev-block">
+                      <div class="lbl sub">Screenshots</div>
+                      <ul class="ev-links">
+                        <li v-for="(url, idx) in evidenceShots(item)" :key="idx">
+                          <a :href="url" target="_blank" rel="noopener noreferrer" @click.stop>Open screenshot {{ idx + 1 }}</a>
+                        </li>
+                      </ul>
+                    </div>
+                    <div v-if="item.video_url" class="ev-block">
+                      <div class="lbl sub">Video</div>
+                      <a :href="item.video_url" target="_blank" rel="noopener noreferrer" @click.stop>Open video</a>
+                    </div>
                   </div>
-                  <div v-if="item.video_url" class="ev-block">
-                    <div class="lbl">Video</div>
-                    <a :href="item.video_url" target="_blank" rel="noopener noreferrer" @click.stop>Open video</a>
-                  </div>
-                </div>
-                <div class="steps-block">
-                  <div class="lbl">Steps</div>
-                  <ol class="steps">
+                  <p v-else-if="item.result === 'fail'" class="empty-hint">No screenshot or video links recorded.</p>
+                </section>
+
+                <section class="detail-section" aria-label="Instructions">
+                  <div class="lbl">Instructions</div>
+                  <p v-if="item.precondition" class="pre">
+                    <strong>Precondition:</strong> {{ item.precondition }}
+                  </p>
+                  <p v-if="!item.steps.length" class="empty-hint">No steps defined for this case.</p>
+                  <ol v-else class="steps">
                     <li v-for="(st, i) in item.steps" :key="i">
                       <div class="sa">{{ st.action }}</div>
                       <div class="se">Expect: {{ st.expected }}</div>
                     </li>
                   </ol>
-                </div>
+                </section>
               </div>
             </div>
           </template>
@@ -406,8 +477,17 @@ function evidenceShots(item: RunItemDetail): string[] {
   color: var(--muted);
 }
 
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
 .list-heading {
-  margin: 0 0 0.5rem;
+  margin: 0;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--muted);
@@ -415,16 +495,39 @@ function evidenceShots(item: RunItemDetail): string[] {
   letter-spacing: 0.04em;
 }
 
+.pref-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pref-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.pref-toggle:hover {
+  color: var(--text);
+}
+
 .items-scroll {
   max-height: min(70vh, 520px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 0.25rem;
+  padding-bottom: 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  align-items: stretch;
 }
 
 .section-heading {
+  flex-shrink: 0;
   margin: 0.35rem 0 0.15rem;
   font-size: 0.78rem;
   font-weight: 600;
@@ -438,10 +541,11 @@ function evidenceShots(item: RunItemDetail): string[] {
 }
 
 .item-card {
+  flex-shrink: 0;
+  min-height: min-content;
   border: 1px solid var(--border);
   border-radius: var(--radius, 12px);
   background: var(--panel);
-  overflow: hidden;
 }
 
 .item-card.open {
@@ -453,13 +557,19 @@ function evidenceShots(item: RunItemDetail): string[] {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
+  padding: 0.75rem 0.8rem 0.95rem;
   border: none;
+  border-radius: var(--radius, 12px);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  overflow: visible;
+}
+
+.item-card.open .item-head {
+  border-radius: var(--radius, 12px) var(--radius, 12px) 0 0;
 }
 
 .item-head:hover {
@@ -483,13 +593,15 @@ function evidenceShots(item: RunItemDetail): string[] {
   display: block;
   font-weight: 600;
   font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .item-sub {
   display: block;
   font-size: 0.78rem;
-  margin-top: 0.2rem;
-  line-height: 1.35;
+  margin-top: 0.25rem;
+  line-height: 1.45;
+  padding-bottom: 0.1em;
 }
 
 .muted {
@@ -521,17 +633,38 @@ function evidenceShots(item: RunItemDetail): string[] {
   opacity: 0.85;
 }
 
+.pill.inline {
+  align-self: auto;
+  display: inline-block;
+}
+
 .item-body {
-  padding: 0 0.85rem 0.85rem;
+  padding: 0 0.85rem 1.15rem;
   border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius, 12px) var(--radius, 12px);
   background: var(--panel-2);
+  overflow: visible;
+}
+
+.detail-section {
+  padding: 0.75rem 0 0.15rem;
+}
+
+.detail-section:last-child {
+  padding-bottom: 0.35rem;
+}
+
+.detail-section + .detail-section {
+  margin-top: 0.65rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
   gap: 0.5rem 1rem;
-  margin: 0.65rem 0 0.5rem;
+  margin: 0.35rem 0 0;
   font-size: 0.82rem;
 }
 
@@ -554,10 +687,6 @@ function evidenceShots(item: RunItemDetail): string[] {
   color: var(--muted);
 }
 
-.notes-block {
-  margin: 0.5rem 0;
-}
-
 .lbl {
   font-size: 0.68rem;
   font-weight: 600;
@@ -572,6 +701,19 @@ function evidenceShots(item: RunItemDetail): string[] {
   white-space: pre-wrap;
   font-size: 0.85rem;
   line-height: 1.45;
+}
+
+.notes-text.empty,
+.empty-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.lbl.sub {
+  margin-top: 0.35rem;
+  margin-bottom: 0.15rem;
 }
 
 .evidence {
@@ -593,15 +735,21 @@ function evidenceShots(item: RunItemDetail): string[] {
   font-weight: 600;
 }
 
-.steps-block {
-  margin-top: 0.65rem;
-}
-
 .steps {
   margin: 0.25rem 0 0;
   padding-left: 1.15rem;
+  padding-bottom: 0.35rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.steps li {
+  margin-bottom: 0.5rem;
+}
+
+.steps li:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0.15rem;
 }
 
 .sa {
