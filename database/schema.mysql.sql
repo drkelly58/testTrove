@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS test_runs (
   project_id BIGINT UNSIGNED NOT NULL,
   suite_id BIGINT UNSIGNED DEFAULT NULL,
   section_id BIGINT UNSIGNED DEFAULT NULL,
+  created_by_user_id BIGINT UNSIGNED DEFAULT NULL,
+  assigned_to_user_id BIGINT UNSIGNED DEFAULT NULL,
   name VARCHAR(500) NOT NULL,
   run_kind VARCHAR(32) NOT NULL DEFAULT 'full_suite',
   state VARCHAR(32) NOT NULL DEFAULT 'open',
@@ -111,9 +113,13 @@ CREATE TABLE IF NOT EXISTS test_runs (
   KEY idx_runs_project (project_id),
   KEY idx_runs_suite (suite_id),
   KEY idx_runs_section (section_id),
+  KEY idx_runs_created_by (created_by_user_id),
+  KEY idx_runs_assigned_to (assigned_to_user_id),
   CONSTRAINT fk_test_runs_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
   CONSTRAINT fk_test_runs_suite FOREIGN KEY (suite_id) REFERENCES test_suites (id) ON DELETE SET NULL,
   CONSTRAINT fk_test_runs_section FOREIGN KEY (section_id) REFERENCES test_sections (id) ON DELETE SET NULL,
+  CONSTRAINT fk_test_runs_created_by FOREIGN KEY (created_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT fk_test_runs_assigned_to FOREIGN KEY (assigned_to_user_id) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT test_runs_state_chk CHECK (state IN ('open', 'locked', 'archived')),
   CONSTRAINT test_runs_run_kind_chk CHECK (run_kind IN ('full_suite', 'section', 'run_book'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

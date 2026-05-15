@@ -5,10 +5,18 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
 import type { FieldDef } from '@/components/EntityFormDialog.vue';
-import { deleteRun, fetchProjectRuns, updateRun, type RunSummary } from '@/api';
+import {
+  deleteRun,
+  fetchProjectMembers,
+  fetchProjectRuns,
+  memberLabel,
+  updateRun,
+  type ProjectMember,
+  type RunSummary,
+} from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
-import { canExecuteRuns, canWriteCatalog } from '@/permissions';
+import { canAssignRuns, canExecuteRuns, canManageRuns, canViewRuns } from '@/permissions';
 
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
 
@@ -16,8 +24,15 @@ const authSession = ref<AuthSessionPayload | null>(null);
 void loadAuthSession().then((s) => {
   authSession.value = s;
 });
-const canWrite = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
 const canRun = computed(() => canExecuteRuns(authSession.value, projectCtx.projectId));
+const canManage = computed(() => canManageRuns(authSession.value, projectCtx.projectId));
+const canAssign = computed(() => canAssignRuns(authSession.value, projectCtx.projectId));
+const canView = computed(() => canViewRuns(authSession.value, projectCtx.projectId));
+const currentUserId = computed(() => authSession.value?.user?.id ?? null);
+
+const projectTesters = ref<ProjectMember[]>([]);
+const testersLoading = ref(false);
+const assignBusyRunId = ref<number | null>(null);
 
 const runs = ref<RunSummary[]>([]);
 const runsLoading = ref(false);
@@ -142,6 +157,61 @@ async function confirmDeleteRun() {
   }
 }
 
+function assigneeLabel(r: RunSummary): string {
+  if (r.assigned_to_display_name?.trim()) {
+    return r.assigned_to_display_name.trim();
+  }
+  if (r.assigned_to_email) {
+    return r.assigned_to_email;
+  }
+  return 'Unassigned';
+}
+
+function isAssignedToMe(r: RunSummary): boolean {
+  const uid = currentUserId.value;
+  return uid !== null && r.assigned_to_user_id === uid;
+}
+
+async function loadTesters(pid: number) {
+  if (!canAssign.value) {
+    projectTesters.value = [];
+    return;
+  }
+  testersLoading.value = true;
+  try {
+    const members = await fetchProjectMembers(pid);
+    projectTesters.value = members.filter((m) => m.role === 'tester');
+  } catch {
+    projectTesters.value = [];
+  } finally {
+    testersLoading.value = false;
+  }
+}
+
+async function onAssignChange(r: RunSummary, raw: string) {
+  const pid = projectCtx.projectId;
+  if (pid === null || !canAssign.value) {
+    return;
+  }
+  const nextId = raw === '' ? null : Number(raw);
+  if (raw !== '' && (!Number.isFinite(nextId) || nextId <= 0)) {
+    return;
+  }
+  if (r.assigned_to_user_id === nextId) {
+    return;
+  }
+  assignBusyRunId.value = r.id;
+  runsError.value = null;
+  try {
+    await updateRun(r.id, { assigned_to_user_id: nextId });
+    await loadRuns(pid);
+  } catch (e) {
+    runsError.value = e instanceof Error ? e.message : 'Could not update assignee';
+  } finally {
+    assignBusyRunId.value = null;
+  }
+}
+
 async function loadRuns(pid: number) {
   runsLoading.value = true;
   runsError.value = null;
@@ -160,12 +230,22 @@ watch(
   async (pid) => {
     if (pid === null) {
       runs.value = [];
+      projectTesters.value = [];
       return;
     }
-    await loadRuns(pid);
+    await Promise.all([loadRuns(pid), loadTesters(pid)]);
   },
   { immediate: true },
 );
+
+watch(canAssign, async (allowed) => {
+  const pid = projectCtx.projectId;
+  if (allowed && pid !== null) {
+    await loadTesters(pid);
+  } else {
+    projectTesters.value = [];
+  }
+});
 </script>
 
 <template>
@@ -174,8 +254,9 @@ watch(
       <h1>Test runs</h1>
       <p class="sub">
         Each run is a <strong>snapshot</strong> of either a <strong>full suite</strong> (every case) or a single
-        <strong>section</strong> (cases in that section only). Custom <strong>run books</strong> (pick-your-own case
-        lists) are planned for a later release.
+        <strong>section</strong> (cases in that section only). Members can <strong>assign</strong> runs to testers so
+        they appear in the tester’s list. Custom <strong>run books</strong> (pick-your-own case lists) are planned for a
+        later release.
       </p>
     </header>
 
@@ -200,6 +281,7 @@ watch(
               <tr>
                 <th>Run</th>
                 <th>Suite</th>
+                <th>Assignee</th>
                 <th>State</th>
                 <th>Progress</th>
                 <th class="col-actions"></th>
@@ -217,6 +299,24 @@ watch(
                   <span class="suite-cell-title">{{ r.suite_name || '—' }}</span>
                   <span v-if="r.section_name" class="suite-cell-sub">{{ r.section_name }}</span>
                 </td>
+                <td class="assignee-cell">
+                  <select
+                    v-if="canAssign"
+                    class="assign-select"
+                    :value="r.assigned_to_user_id ?? ''"
+                    :disabled="assignBusyRunId === r.id || testersLoading"
+                    @change="onAssignChange(r, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">Unassigned</option>
+                    <option v-for="t in projectTesters" :key="t.user_id" :value="t.user_id">
+                      {{ memberLabel(t) }}
+                    </option>
+                  </select>
+                  <template v-else>
+                    <span class="assignee-label">{{ assigneeLabel(r) }}</span>
+                    <span v-if="isAssignedToMe(r)" class="assigned-you">Assigned to you</span>
+                  </template>
+                </td>
                 <td><span class="state-pill">{{ r.state }}</span></td>
                 <td>
                   <span class="prog"
@@ -225,15 +325,20 @@ watch(
                 </td>
                 <td class="col-actions">
                   <div class="run-row-actions">
-                    <RouterLink class="link" :to="'/runs/' + r.id + '/overview'">Overview</RouterLink>
+                    <RouterLink v-if="canView" class="link" :to="'/runs/' + r.id + '/overview'">Overview</RouterLink>
                     <RouterLink v-if="canRun" class="link" :to="'/runs/' + r.id">Continue</RouterLink>
-                    <IconButton v-if="canRun" label="Edit run" title="Edit run name and state" @click="openEditRun(r)">
+                    <IconButton
+                      v-if="canManage"
+                      label="Edit run"
+                      title="Edit run name and state"
+                      @click="openEditRun(r)"
+                    >
                       <svg viewBox="0 0 24 24">
                         <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
                       </svg>
                     </IconButton>
                     <IconButton
-                      v-if="canWrite"
+                      v-if="canManage"
                       danger
                       label="Delete this run"
                       title="Delete this run (removes all result rows)"
@@ -391,5 +496,33 @@ watch(
   border-radius: 6px;
   border: 1px solid var(--border);
   color: var(--muted);
+}
+
+.assignee-cell {
+  min-width: 9rem;
+}
+
+.assign-select {
+  width: 100%;
+  max-width: 11rem;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.assignee-label {
+  display: block;
+  font-size: 0.82rem;
+}
+
+.assigned-you {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent-2);
 }
 </style>

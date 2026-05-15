@@ -90,12 +90,25 @@ final class ProjectController
     public function list(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $auth = $this->authorizationService();
-        if ($auth->isAuthEnforced()) {
+        if (!$auth->isOpenAccess()) {
             $userId = $auth->requireUserId();
             if ($auth->isGlobalAdmin($userId)) {
                 $stmt = $this->pdo->query(
                     "SELECT id, name, description, created_at, 'member' AS my_role FROM projects ORDER BY id DESC"
                 );
+                $rows = $stmt->fetchAll();
+            } elseif ($auth->isDevMode()) {
+                $roles = $auth->projectRolesForUser($userId);
+                $stmt = $this->pdo->query('SELECT id, name, description, created_at FROM projects ORDER BY id DESC');
+                $rows = [];
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $pid = (int) $row['id'];
+                    if (!isset($roles[$pid])) {
+                        continue;
+                    }
+                    $row['my_role'] = $roles[$pid];
+                    $rows[] = $row;
+                }
             } else {
                 $stmt = $this->pdo->prepare(
                     'SELECT p.id, p.name, p.description, p.created_at, pm.role AS my_role
@@ -104,11 +117,12 @@ final class ProjectController
                      ORDER BY p.id DESC'
                 );
                 $stmt->execute(['uid' => $userId]);
+                $rows = $stmt->fetchAll();
             }
         } else {
             $stmt = $this->pdo->query('SELECT id, name, description, created_at FROM projects ORDER BY id DESC');
+            $rows = $stmt->fetchAll();
         }
-        $rows = $stmt->fetchAll();
 
         return JsonResponse::encode($response, ['data' => $rows]);
     }

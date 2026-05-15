@@ -28,7 +28,7 @@ final class SuiteController
     public function list(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $projectId = (int) ($args['projectId'] ?? 0);
-        if ($denied = $this->authorizeProjectRead($projectId)) {
+        if ($denied = $this->authorizeCatalogRead($projectId)) {
             return $denied;
         }
         $stmt = $this->pdo->prepare(

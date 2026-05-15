@@ -25,22 +25,28 @@ trait AuthorizesApiAccess
         return JsonResponse::error('Forbidden', 403);
     }
 
-    protected function authorizeProjectRead(int $projectId): ?ResponseInterface
+    protected function authorizeCatalogRead(int $projectId): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
-        if (!$this->authorization->canReadProject($userId, $projectId)) {
+        if (!$this->authorization->canReadCatalog($userId, $projectId)) {
             return $this->forbid();
         }
 
         return null;
     }
 
+    /** @deprecated Use {@see authorizeCatalogRead}. */
+    protected function authorizeProjectRead(int $projectId): ?ResponseInterface
+    {
+        return $this->authorizeCatalogRead($projectId);
+    }
+
     protected function authorizeProjectWrite(int $projectId): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -51,9 +57,28 @@ trait AuthorizesApiAccess
         return null;
     }
 
+    protected function authorizeRunList(int $projectId): ?ResponseInterface
+    {
+        if ($this->authorization->isOpenAccess()) {
+            return null;
+        }
+        $userId = $this->authorization->requireUserId();
+        if (!$this->authorization->canListRunsInProject($userId, $projectId)) {
+            return $this->forbid();
+        }
+
+        return null;
+    }
+
+    /** @deprecated Use {@see authorizeRunList}. */
+    protected function authorizeRunRead(int $projectId): ?ResponseInterface
+    {
+        return $this->authorizeRunList($projectId);
+    }
+
     protected function authorizeRunExecute(int $projectId): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -64,22 +89,9 @@ trait AuthorizesApiAccess
         return null;
     }
 
-    protected function authorizeRunRead(int $projectId): ?ResponseInterface
-    {
-        if (!$this->authorization->isAuthEnforced()) {
-            return null;
-        }
-        $userId = $this->authorization->requireUserId();
-        if (!$this->authorization->canReadRuns($userId, $projectId)) {
-            return $this->forbid();
-        }
-
-        return null;
-    }
-
     protected function authorizeProjectDelete(int $projectId): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -92,7 +104,7 @@ trait AuthorizesApiAccess
 
     protected function authorizeWorkspaceAdmin(): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -103,9 +115,22 @@ trait AuthorizesApiAccess
         return null;
     }
 
+    protected function authorizeManageUsers(): ?ResponseInterface
+    {
+        if ($this->authorization->isOpenAccess()) {
+            return null;
+        }
+        $userId = $this->authorization->requireUserId();
+        if (!$this->authorization->canManageUsers($userId)) {
+            return $this->forbid();
+        }
+
+        return null;
+    }
+
     protected function authorizeManageMembers(int $projectId): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -118,7 +143,7 @@ trait AuthorizesApiAccess
 
     protected function authorizeCreateProject(): ?ResponseInterface
     {
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();
@@ -136,7 +161,7 @@ trait AuthorizesApiAccess
             return null;
         }
 
-        return $this->authorizeProjectRead($projectId);
+        return $this->authorizeCatalogRead($projectId);
     }
 
     protected function authorizeSuiteWrite(int $suiteId): ?ResponseInterface
@@ -165,8 +190,15 @@ trait AuthorizesApiAccess
         if ($projectId === null) {
             return null;
         }
+        if ($this->authorization->isOpenAccess()) {
+            return null;
+        }
+        $userId = $this->authorization->requireUserId();
+        if (!$this->authorization->canExecuteRun($userId, $projectId, $runId)) {
+            return $this->forbid();
+        }
 
-        return $this->authorizeRunExecute($projectId);
+        return null;
     }
 
     protected function authorizeRunReadById(int $runId): ?ResponseInterface
@@ -175,8 +207,28 @@ trait AuthorizesApiAccess
         if ($projectId === null) {
             return null;
         }
+        if ($this->authorization->isOpenAccess()) {
+            return null;
+        }
+        $userId = $this->authorization->requireUserId();
+        if (!$this->authorization->canReadRun($userId, $projectId, $runId)) {
+            return $this->forbid();
+        }
 
-        return $this->authorizeRunRead($projectId);
+        return null;
+    }
+
+    protected function authorizeRunAssign(int $projectId): ?ResponseInterface
+    {
+        if ($this->authorization->isOpenAccess()) {
+            return null;
+        }
+        $userId = $this->authorization->requireUserId();
+        if (!$this->authorization->canAssignRuns($userId, $projectId)) {
+            return $this->forbid();
+        }
+
+        return null;
     }
 
     protected function authorizeRunManageById(int $runId): ?ResponseInterface
@@ -185,7 +237,7 @@ trait AuthorizesApiAccess
         if ($projectId === null) {
             return null;
         }
-        if (!$this->authorization->isAuthEnforced()) {
+        if ($this->authorization->isOpenAccess()) {
             return null;
         }
         $userId = $this->authorization->requireUserId();

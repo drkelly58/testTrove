@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS test_runs (
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   suite_id INTEGER REFERENCES test_suites(id) ON DELETE SET NULL,
   section_id INTEGER REFERENCES test_sections(id) ON DELETE SET NULL,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   run_kind TEXT NOT NULL DEFAULT 'full_suite' CHECK (run_kind IN ('full_suite', 'section', 'run_book')),
   state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'locked', 'archived')),

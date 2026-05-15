@@ -127,6 +127,8 @@ final class Database
             self::oauthIdentityMigrations($pdo, $driver);
             self::userPreferencesMigrations($pdo, $driver);
             self::projectMembersMigrations($pdo, $driver);
+            self::testRunsCreatedByMigrations($pdo, $driver);
+            self::testRunsAssignedToMigrations($pdo, $driver);
 
             return;
         }
@@ -140,6 +142,98 @@ final class Database
         self::oauthIdentityMigrations($pdo, $driver);
         self::userPreferencesMigrations($pdo, $driver);
         self::projectMembersMigrations($pdo, $driver);
+        self::testRunsCreatedByMigrations($pdo, $driver);
+        self::testRunsAssignedToMigrations($pdo, $driver);
+    }
+
+    /** Nullable owner for tester-scoped run visibility. */
+    private static function testRunsCreatedByMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'test_runs') || !self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+        if (self::columnExists($pdo, $driver, 'test_runs', 'created_by_user_id')) {
+            return;
+        }
+
+        $ignore = ['already exists', 'duplicate', 'duplicate column'];
+        if ($driver === 'mysql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD COLUMN created_by_user_id BIGINT UNSIGNED NULL AFTER section_id',
+                $ignore
+            );
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD CONSTRAINT fk_test_runs_created_by FOREIGN KEY (created_by_user_id) REFERENCES users (id) ON DELETE SET NULL',
+                $ignore
+            );
+            self::safeExec($pdo, 'CREATE INDEX idx_runs_created_by ON test_runs (created_by_user_id)', $ignore);
+
+            return;
+        }
+        if ($driver === 'pgsql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL',
+                $ignore
+            );
+            self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_runs_created_by ON test_runs (created_by_user_id)', $ignore);
+
+            return;
+        }
+
+        self::safeExec(
+            $pdo,
+            'ALTER TABLE test_runs ADD COLUMN created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL',
+            $ignore
+        );
+        self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_runs_created_by ON test_runs(created_by_user_id)', $ignore);
+    }
+
+    /** Nullable assignee so members can delegate runs to testers. */
+    private static function testRunsAssignedToMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'test_runs') || !self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+        if (self::columnExists($pdo, $driver, 'test_runs', 'assigned_to_user_id')) {
+            return;
+        }
+
+        $ignore = ['already exists', 'duplicate', 'duplicate column'];
+        if ($driver === 'mysql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD COLUMN assigned_to_user_id BIGINT UNSIGNED NULL AFTER created_by_user_id',
+                $ignore
+            );
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD CONSTRAINT fk_test_runs_assigned_to FOREIGN KEY (assigned_to_user_id) REFERENCES users (id) ON DELETE SET NULL',
+                $ignore
+            );
+            self::safeExec($pdo, 'CREATE INDEX idx_runs_assigned_to ON test_runs (assigned_to_user_id)', $ignore);
+
+            return;
+        }
+        if ($driver === 'pgsql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS assigned_to_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL',
+                $ignore
+            );
+            self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_runs_assigned_to ON test_runs (assigned_to_user_id)', $ignore);
+
+            return;
+        }
+
+        self::safeExec(
+            $pdo,
+            'ALTER TABLE test_runs ADD COLUMN assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL',
+            $ignore
+        );
+        self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_runs_assigned_to ON test_runs(assigned_to_user_id)', $ignore);
     }
 
     /**

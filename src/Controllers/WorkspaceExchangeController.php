@@ -174,6 +174,10 @@ final class WorkspaceExchangeController
 
     public function csvPreview(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
+        if ($denied = $this->authorizeWorkspaceAdmin()) {
+            return $denied;
+        }
+
         $body = '';
         $files = $request->getUploadedFiles();
         if (isset($files['file']) && $files['file']->getError() === UPLOAD_ERR_OK) {

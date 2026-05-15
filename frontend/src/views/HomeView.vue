@@ -37,7 +37,7 @@ import {
 } from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
-import { canExecuteRuns, canWriteCatalog } from '@/permissions';
+import { canExecuteRuns, canReadCatalog, canWriteCatalog, projectRoleFor } from '@/permissions';
 import { stepsAsArray } from '@/stepsModel';
 
 const router = useRouter();
@@ -48,8 +48,21 @@ void loadAuthSession().then((s) => {
   authSession.value = s;
 });
 
+const canRead = computed(() => canReadCatalog(authSession.value, projectCtx.projectId));
 const canWrite = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
 const canRun = computed(() => canExecuteRuns(authSession.value, projectCtx.projectId));
+
+watch(
+  () => [projectCtx.projectId, authSession.value] as const,
+  () => {
+    if (!authSession.value?.auth_required || projectCtx.projectId == null) {
+      return;
+    }
+    if (!canRead.value && projectRoleFor(authSession.value, projectCtx.projectId) === 'viewer') {
+      void router.replace({ name: 'runs' });
+    }
+  },
+);
 
 function caseSteps(c: TestCase) {
   return stepsAsArray(c.steps);

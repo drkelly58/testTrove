@@ -1,8 +1,14 @@
+import { appendDevPermissionsToUrl, loadStoredDevPermissions } from '@/devPermissions';
+
 const base = '';
 
 /** Include session cookie for OAuth-backed API authentication. */
 export function apiFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, { credentials: 'include', ...init });
+  let url = typeof input === 'string' ? input : input.toString();
+  if (url.startsWith('/api/')) {
+    url = appendDevPermissionsToUrl(url, loadStoredDevPermissions());
+  }
+  return fetch(url, { credentials: 'include', ...init });
 }
 
 /** Ask for JSON responses (Slim error handler) and send JSON bodies. */
@@ -310,6 +316,9 @@ export type RunSummary = {
   created_at: string;
   suite_name: string | null;
   section_name: string | null;
+  assigned_to_user_id: number | null;
+  assigned_to_display_name: string | null;
+  assigned_to_email: string | null;
   item_count: number;
   passed: number;
   failed: number;
@@ -327,6 +336,17 @@ export type RunDetail = {
   created_at: string;
   suite_name: string | null;
   section_name: string | null;
+  assigned_to_user_id: number | null;
+  assigned_to_display_name: string | null;
+  assigned_to_email: string | null;
+};
+
+export type ProjectMember = {
+  user_id: number;
+  role: 'member' | 'tester' | 'viewer';
+  email: string;
+  display_name: string;
+  created_at: string;
 };
 
 export type RunItemSeverity = 'breaking' | 'ui_only' | 'unclear';
@@ -438,9 +458,27 @@ export async function fetchRun(runId: number): Promise<{ run: RunDetail; items: 
   return data.data;
 }
 
+export async function fetchProjectMembers(projectId: number): Promise<ProjectMember[]> {
+  const res = await apiFetch(`${base}/api/projects/${projectId}/members`);
+  const data = await parseJson<{ data: ProjectMember[] }>(res);
+  return data.data;
+}
+
+export function memberLabel(m: Pick<ProjectMember, 'display_name' | 'email'>): string {
+  const name = m.display_name?.trim();
+  if (name) {
+    return name;
+  }
+  return m.email;
+}
+
 export async function updateRun(
   runId: number,
-  body: { name?: string; state?: 'open' | 'locked' | 'archived' },
+  body: {
+    name?: string;
+    state?: 'open' | 'locked' | 'archived';
+    assigned_to_user_id?: number | null;
+  },
 ): Promise<RunDetail> {
   const res = await apiFetch(`${base}/api/runs/${runId}`, {
     method: 'PATCH',
@@ -789,4 +827,56 @@ export async function importCasesFile(suiteId: number, file: File): Promise<{ im
     throw new Error(msg);
   }
   return (JSON.parse(text) as { data: { imported: number } }).data;
+}
+
+export type UserAccount = {
+  id: number;
+  email: string;
+  display_name: string;
+  role: 'admin' | 'user';
+  created_at: string;
+};
+
+export async function fetchUsers(): Promise<UserAccount[]> {
+  const res = await apiFetch(`${base}/api/users`);
+  const data = await parseJson<{ data: UserAccount[] }>(res);
+  return data.data;
+}
+
+export async function createUser(body: {
+  email: string;
+  password: string;
+  display_name: string;
+  role?: 'admin' | 'user';
+}): Promise<UserAccount> {
+  const res = await apiFetch(`${base}/api/users`, {
+    method: 'POST',
+    headers: jsonWriteHeaders,
+    body: JSON.stringify(body),
+  });
+  const data = await parseJson<{ data: UserAccount }>(res);
+  return data.data;
+}
+
+export async function updateUser(
+  userId: number,
+  body: {
+    email?: string;
+    display_name?: string;
+    role?: 'admin' | 'user';
+    password?: string;
+  },
+): Promise<UserAccount> {
+  const res = await apiFetch(`${base}/api/users/${userId}`, {
+    method: 'PATCH',
+    headers: jsonWriteHeaders,
+    body: JSON.stringify(body),
+  });
+  const data = await parseJson<{ data: UserAccount }>(res);
+  return data.data;
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  const res = await apiFetch(`${base}/api/users/${userId}`, { method: 'DELETE' });
+  await parseJson<{ data: { id: number; deleted: boolean } }>(res);
 }

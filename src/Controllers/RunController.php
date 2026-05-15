@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth\ProjectRole;
 use App\Database;
 use App\JsonRequestBody;
 use App\JsonResponse;
@@ -44,15 +45,30 @@ final class RunController
     public function listByProject(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $projectId = (int) ($args['projectId'] ?? 0);
-        if ($denied = $this->authorizeRunRead($projectId)) {
+        if ($denied = $this->authorizeRunList($projectId)) {
             return $denied;
         }
         if (!$this->projectExists($projectId)) {
             return JsonResponse::error('project not found', 404);
         }
 
+        $params = ['pid' => $projectId];
+        $ownerFilter = '';
+        $auth = $this->authorizationService();
+        if ($auth->isAuthEnforced()) {
+            $userId = $auth->requireUserId();
+            if (!$auth->isGlobalAdmin($userId) && $auth->projectRole($userId, $projectId) === ProjectRole::TESTER) {
+                $ownerFilter = ' AND (r.created_by_user_id = :uid_created OR r.assigned_to_user_id = :uid_assigned)';
+                $params['uid_created'] = $userId;
+                $params['uid_assigned'] = $userId;
+            }
+        }
+
         $stmt = $this->pdo->prepare(
             'SELECT r.id, r.project_id, r.suite_id, r.section_id, r.name, r.run_kind, r.state, r.created_at,
+                    r.assigned_to_user_id,
+                    assignee.display_name AS assigned_to_display_name,
+                    assignee.email AS assigned_to_email,
                     s.name AS suite_name,
                     sec.name AS section_name,
                     (SELECT COUNT(*) FROM test_run_items i WHERE i.run_id = r.id) AS item_count,
@@ -62,10 +78,11 @@ final class RunController
              FROM test_runs r
              LEFT JOIN test_suites s ON s.id = r.suite_id
              LEFT JOIN test_sections sec ON sec.id = r.section_id
-             WHERE r.project_id = :pid
+             LEFT JOIN users assignee ON assignee.id = r.assigned_to_user_id
+             WHERE r.project_id = :pid' . $ownerFilter . '
              ORDER BY r.id DESC'
         );
-        $stmt->execute(['pid' => $projectId]);
+        $stmt->execute($params);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$row) {
             $row['item_count'] = (int) ($row['item_count'] ?? 0);
@@ -80,6 +97,9 @@ final class RunController
             if (!isset($row['section_name']) || $row['section_name'] === '') {
                 $row['section_name'] = null;
             }
+            $row['assigned_to_user_id'] = self::nullableIntColumn($row['assigned_to_user_id'] ?? null);
+            $row['assigned_to_display_name'] = self::nullableStringColumn($row['assigned_to_display_name'] ?? null);
+            $row['assigned_to_email'] = self::nullableStringColumn($row['assigned_to_email'] ?? null);
         }
         unset($row);
 
@@ -113,6 +133,20 @@ final class RunController
                 $customName = null;
             }
         }
+        $assignedTo = null;
+        if (array_key_exists('assigned_to_user_id', $data)) {
+            $parsed = $this->parseAssignedToUserId($data['assigned_to_user_id']);
+            if (isset($parsed['error'])) {
+                return JsonResponse::error($parsed['error'], 422);
+            }
+            if ($denied = $this->authorizeRunAssign($projectId)) {
+                return $denied;
+            }
+            if ($err = $this->validateRunAssignee($projectId, $parsed['user_id'])) {
+                return $err;
+            }
+            $assignedTo = $parsed['user_id'];
+        }
 
         $defaultName = 'Run: ' . $suiteName . ' · ' . gmdate('Y-m-d H:i') . ' UTC';
         $name = $customName ?? $defaultName;
@@ -131,15 +165,19 @@ final class RunController
         }
         $caseIds = array_map('intval', $caseIds);
 
+        $createdBy = $this->runCreatorUserId();
+
         $this->pdo->beginTransaction();
         try {
             $insRun = $this->pdo->prepare(
-                'INSERT INTO test_runs (project_id, suite_id, section_id, name, run_kind, state)
-                 VALUES (:project_id, :suite_id, NULL, :name, \'full_suite\', \'open\')'
+                'INSERT INTO test_runs (project_id, suite_id, section_id, created_by_user_id, assigned_to_user_id, name, run_kind, state)
+                 VALUES (:project_id, :suite_id, NULL, :created_by, :assigned_to, :name, \'full_suite\', \'open\')'
             );
             $insRun->execute([
                 'project_id' => $projectId,
                 'suite_id' => $suiteId,
+                'created_by' => $createdBy,
+                'assigned_to' => $assignedTo,
                 'name' => $name,
             ]);
             $runId = (int) $this->pdo->lastInsertId();
@@ -215,6 +253,20 @@ final class RunController
                 $customName = null;
             }
         }
+        $assignedTo = null;
+        if (array_key_exists('assigned_to_user_id', $data)) {
+            $parsed = $this->parseAssignedToUserId($data['assigned_to_user_id']);
+            if (isset($parsed['error'])) {
+                return JsonResponse::error($parsed['error'], 422);
+            }
+            if ($denied = $this->authorizeRunAssign($projectId)) {
+                return $denied;
+            }
+            if ($err = $this->validateRunAssignee($projectId, $parsed['user_id'])) {
+                return $err;
+            }
+            $assignedTo = $parsed['user_id'];
+        }
 
         $defaultName = 'Run: ' . $suiteName . ' / ' . $sectionName . ' · ' . gmdate('Y-m-d H:i') . ' UTC';
         $name = $customName ?? $defaultName;
@@ -232,16 +284,20 @@ final class RunController
         }
         $caseIds = array_map('intval', $caseIds);
 
+        $createdBy = $this->runCreatorUserId();
+
         $this->pdo->beginTransaction();
         try {
             $insRun = $this->pdo->prepare(
-                'INSERT INTO test_runs (project_id, suite_id, section_id, name, run_kind, state)
-                 VALUES (:project_id, :suite_id, :section_id, :name, \'section\', \'open\')'
+                'INSERT INTO test_runs (project_id, suite_id, section_id, created_by_user_id, assigned_to_user_id, name, run_kind, state)
+                 VALUES (:project_id, :suite_id, :section_id, :created_by, :assigned_to, :name, \'section\', \'open\')'
             );
             $insRun->execute([
                 'project_id' => $projectId,
                 'suite_id' => $suiteId,
                 'section_id' => $sectionId,
+                'created_by' => $createdBy,
+                'assigned_to' => $assignedTo,
                 'name' => $name,
             ]);
             $runId = (int) $this->pdo->lastInsertId();
@@ -354,9 +410,11 @@ final class RunController
         if ($runId <= 0) {
             return JsonResponse::error('Invalid run id', 422);
         }
-        if ($this->fetchRunRow($runId) === null) {
+        $runRow = $this->fetchRunRow($runId);
+        if ($runRow === null) {
             return JsonResponse::error('run not found', 404);
         }
+        $projectId = (int) $runRow['project_id'];
 
         try {
             $data = JsonRequestBody::decodeAssoc($request);
@@ -366,6 +424,20 @@ final class RunController
 
         $sets = [];
         $params = ['id' => $runId];
+        if (array_key_exists('assigned_to_user_id', $data)) {
+            if ($denied = $this->authorizeRunAssign($projectId)) {
+                return $denied;
+            }
+            $parsed = $this->parseAssignedToUserId($data['assigned_to_user_id']);
+            if (isset($parsed['error'])) {
+                return JsonResponse::error($parsed['error'], 422);
+            }
+            if ($err = $this->validateRunAssignee($projectId, $parsed['user_id'])) {
+                return $err;
+            }
+            $sets[] = 'assigned_to_user_id = :assigned_to';
+            $params['assigned_to'] = $parsed['user_id'];
+        }
         if (array_key_exists('name', $data)) {
             $name = trim((string) $data['name']);
             if ($name === '') {
@@ -654,11 +726,15 @@ final class RunController
     {
         $stmt = $this->pdo->prepare(
             'SELECT r.id, r.project_id, r.suite_id, r.section_id, r.name, r.run_kind, r.state, r.created_at,
+                    r.assigned_to_user_id,
+                    assignee.display_name AS assigned_to_display_name,
+                    assignee.email AS assigned_to_email,
                     s.name AS suite_name,
                     sec.name AS section_name
              FROM test_runs r
              LEFT JOIN test_suites s ON s.id = r.suite_id
              LEFT JOIN test_sections sec ON sec.id = r.section_id
+             LEFT JOIN users assignee ON assignee.id = r.assigned_to_user_id
              WHERE r.id = :id LIMIT 1'
         );
         $stmt->execute(['id' => $runId]);
@@ -678,8 +754,81 @@ final class RunController
         if (!array_key_exists('suite_name', $row)) {
             $row['suite_name'] = null;
         }
+        $row['assigned_to_user_id'] = self::nullableIntColumn($row['assigned_to_user_id'] ?? null);
+        $row['assigned_to_display_name'] = self::nullableStringColumn($row['assigned_to_display_name'] ?? null);
+        $row['assigned_to_email'] = self::nullableStringColumn($row['assigned_to_email'] ?? null);
 
         return $row;
+    }
+
+    /**
+     * @return array{user_id: int|null}|array{error: string}
+     */
+    private function parseAssignedToUserId(mixed $raw): array
+    {
+        if ($raw === null || $raw === '') {
+            return ['user_id' => null];
+        }
+        if (is_int($raw)) {
+            $id = $raw;
+        } elseif (is_string($raw) && ctype_digit(trim($raw))) {
+            $id = (int) trim($raw);
+        } else {
+            return ['error' => 'assigned_to_user_id must be a positive integer or null'];
+        }
+        if ($id <= 0) {
+            return ['error' => 'assigned_to_user_id must be a positive integer or null'];
+        }
+
+        return ['user_id' => $id];
+    }
+
+    private function validateRunAssignee(int $projectId, ?int $userId): ?ResponseInterface
+    {
+        if ($userId === null) {
+            return null;
+        }
+        $st = $this->pdo->prepare(
+            'SELECT role FROM project_members WHERE project_id = :pid AND user_id = :uid LIMIT 1'
+        );
+        $st->execute(['pid' => $projectId, 'uid' => $userId]);
+        $role = $st->fetchColumn();
+        if ($role === false) {
+            return JsonResponse::error('assignee must be a project member with the tester role', 422);
+        }
+        if ((string) $role !== ProjectRole::TESTER) {
+            return JsonResponse::error('assignee must be a project member with the tester role', 422);
+        }
+
+        return null;
+    }
+
+    private static function nullableIntColumn(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    private static function nullableStringColumn(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (string) $value;
+    }
+
+    private function runCreatorUserId(): ?int
+    {
+        $auth = $this->authorizationService();
+        if (!$auth->isAuthEnforced()) {
+            return null;
+        }
+
+        return $auth->requireUserId();
     }
 
     private static function looksLikeSqliteReadonlyError(string $message): bool

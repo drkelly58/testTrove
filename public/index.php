@@ -16,7 +16,9 @@ use App\Services\AuthorizationService;
 use App\Services\LocalUserBootstrap;
 use App\Services\ProjectScopeResolver;
 use App\Controllers\ProjectMemberController;
+use App\Controllers\UserController;
 use App\Middleware\CorsMiddleware;
+use App\Middleware\DevPermissionMiddleware;
 use App\Middleware\RequireAuthMiddleware;
 use App\Middleware\SessionMiddleware;
 use Dotenv\Dotenv;
@@ -75,6 +77,7 @@ $authSettings = AuthSettings::fromGlobals($_ENV);
 LocalUserBootstrap::ensureFromEnv($pdo, $authSettings);
 $corsOrigin = $_ENV['CORS_ORIGIN'] ?? null;
 $app->add(new RequireAuthMiddleware($authSettings));
+$app->add(new DevPermissionMiddleware($authSettings));
 $app->add(new SessionMiddleware($root));
 $app->add(new CorsMiddleware($corsOrigin));
 
@@ -96,10 +99,16 @@ $sections = new SectionController($pdo, $authorization, $projectScope);
 $cases = new CaseController($pdo, $authorization, $projectScope);
 $workspace = new WorkspaceExchangeController($pdo, $authorization, $projectScope);
 $runs = new RunController($pdo, $authorization, $projectScope);
+$users = new UserController($pdo, $authorization, $projectScope);
 
 $app->get('/api/health', function ($request, $response) {
     return JsonResponse::encode($response, ['ok' => true]);
 });
+
+$app->get('/api/users', [$users, 'list']);
+$app->post('/api/users', [$users, 'create']);
+$app->patch('/api/users/{userId}', [$users, 'update']);
+$app->delete('/api/users/{userId}', [$users, 'delete']);
 
 $app->get('/api/projects', [$projects, 'list']);
 $app->post('/api/projects', [$projects, 'create']);

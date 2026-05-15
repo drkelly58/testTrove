@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Auth\AuthSettings;
+use App\Auth\DevPermissionSimulator;
 use App\Auth\OAuthProfile;
 use App\Auth\OAuthProviderFactory;
 use App\Auth\OAuthResourceProfileMapper;
@@ -42,7 +43,13 @@ final class AuthController
         $user = null;
         $projectRoles = [];
         $isAdmin = false;
-        if (!empty($_SESSION['user_id']) && is_numeric((string) $_SESSION['user_id'])) {
+        $devPermissions = null;
+        if ($this->authorization->isDevMode()) {
+            $userId = $this->authorization->requireUserId();
+            $isAdmin = $this->authorization->isGlobalAdmin($userId);
+            $projectRoles = $this->authorization->projectRolesForUser($userId);
+            $devPermissions = DevPermissionSimulator::describe();
+        } elseif (!empty($_SESSION['user_id']) && is_numeric((string) $_SESSION['user_id'])) {
             $userId = (int) $_SESSION['user_id'];
             $user = $this->users->findById($userId);
             if ($user !== null && $this->settings->isAuthRequired()) {
@@ -59,6 +66,7 @@ final class AuthController
                 'user' => $user,
                 'is_admin' => $isAdmin,
                 'project_roles' => $projectRoles,
+                'dev_permissions' => $devPermissions,
             ],
         ]);
     }

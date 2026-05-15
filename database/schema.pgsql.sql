@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS test_runs (
   project_id BIGINT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
   suite_id BIGINT REFERENCES test_suites (id) ON DELETE SET NULL,
   section_id BIGINT REFERENCES test_sections (id) ON DELETE SET NULL,
+  created_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+  assigned_to_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   run_kind TEXT NOT NULL DEFAULT 'full_suite' CHECK (run_kind IN ('full_suite', 'section', 'run_book')),
   state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'locked', 'archived')),
@@ -132,4 +134,5 @@ CREATE INDEX IF NOT EXISTS idx_cases_suite ON test_cases (suite_id);
 CREATE INDEX IF NOT EXISTS idx_cases_section ON test_cases (section_id);
 CREATE INDEX IF NOT EXISTS idx_sections_suite ON test_sections (suite_id);
 CREATE INDEX IF NOT EXISTS idx_runs_project ON test_runs (project_id);
+CREATE INDEX IF NOT EXISTS idx_runs_created_by ON test_runs (created_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_run_items_run ON test_run_items (run_id);

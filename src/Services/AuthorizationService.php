@@ -5,17 +5,14 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Auth\AuthSettings;
+use App\Auth\DevPermissionSimulator;
 use App\Auth\ProjectRole;
 use App\Auth\UserRole;
 use PDO;
 
 /**
- * Project-scoped RBAC. When auth is disabled, all checks pass.
- *
- * Global admin: all projects, workspace import/export, user management.
- * Project member: read/write catalog and runs.
- * Project tester: read catalog, create/execute runs.
- * Project viewer: read catalog and runs (reports when added).
+ * Project-scoped RBAC. When auth is disabled, all checks pass unless
+ * {@see DevPermissionSimulator} is active (dev URL params).
  */
 final class AuthorizationService
 {
@@ -30,8 +27,23 @@ final class AuthorizationService
         return $this->settings->isAuthRequired();
     }
 
+    /** Auth off and no dev role simulation — full access. */
+    public function isOpenAccess(): bool
+    {
+        return !$this->isAuthEnforced() && !DevPermissionSimulator::isActive();
+    }
+
+    /** Auth off with ?role=…&projects=… simulation. */
+    public function isDevMode(): bool
+    {
+        return !$this->isAuthEnforced() && DevPermissionSimulator::isActive();
+    }
+
     public function currentUserId(): ?int
     {
+        if ($this->isDevMode()) {
+            return DevPermissionSimulator::DEV_USER_ID;
+        }
         if (empty($_SESSION['user_id']) || !is_numeric((string) $_SESSION['user_id'])) {
             return null;
         }
@@ -41,6 +53,9 @@ final class AuthorizationService
 
     public function requireUserId(): int
     {
+        if ($this->isDevMode()) {
+            return DevPermissionSimulator::DEV_USER_ID;
+        }
         $id = $this->currentUserId();
         if ($id === null || $id <= 0) {
             throw new \RuntimeException('Authenticated user required');
@@ -51,8 +66,11 @@ final class AuthorizationService
 
     public function isGlobalAdmin(int $userId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
+        }
+        if ($this->isDevMode()) {
+            return DevPermissionSimulator::isGlobalAdmin();
         }
 
         $st = $this->pdo->prepare('SELECT role FROM users WHERE id = :id LIMIT 1');
@@ -62,13 +80,16 @@ final class AuthorizationService
         return $role !== false && (string) $role === UserRole::ADMIN;
     }
 
-  /**
-   * @return array<int, string> project_id => project role
-   */
+    /**
+     * @return array<int, string> project_id => project role
+     */
     public function projectRolesForUser(int $userId): array
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return [];
+        }
+        if ($this->isDevMode()) {
+            return DevPermissionSimulator::projectRoles();
         }
         if ($this->isGlobalAdmin($userId)) {
             return [];
@@ -92,8 +113,15 @@ final class AuthorizationService
 
     public function projectRole(int $userId, int $projectId): ?string
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return ProjectRole::MEMBER;
+        }
+        if ($this->isDevMode()) {
+            if (DevPermissionSimulator::isGlobalAdmin()) {
+                return ProjectRole::MEMBER;
+            }
+
+            return DevPermissionSimulator::projectRoles()[$projectId] ?? null;
         }
         if ($this->isGlobalAdmin($userId)) {
             return ProjectRole::MEMBER;
@@ -114,31 +142,22 @@ final class AuthorizationService
 
     public function canAccessProject(int $userId, int $projectId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        if ($this->isGlobalAdmin($userId)) {
             return true;
         }
 
         return $this->projectRole($userId, $projectId) !== null;
     }
 
-    public function canReadProject(int $userId, int $projectId): bool
+    public function canReadCatalog(int $userId, int $projectId): bool
     {
-        return $this->canAccessProject($userId, $projectId);
-    }
-
-    public function canWriteProject(int $userId, int $projectId): bool
-    {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
         }
-        $role = $this->projectRole($userId, $projectId);
-
-        return $role === ProjectRole::MEMBER;
-    }
-
-    public function canExecuteRuns(int $userId, int $projectId): bool
-    {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isGlobalAdmin($userId)) {
             return true;
         }
         $role = $this->projectRole($userId, $projectId);
@@ -146,20 +165,108 @@ final class AuthorizationService
         return $role === ProjectRole::MEMBER || $role === ProjectRole::TESTER;
     }
 
-    /** Delete runs and other run lifecycle admin (not step execution). */
+    /** @deprecated Use {@see canReadCatalog}. */
+    public function canReadProject(int $userId, int $projectId): bool
+    {
+        return $this->canReadCatalog($userId, $projectId);
+    }
+
+    public function canWriteProject(int $userId, int $projectId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        $role = $this->projectRole($userId, $projectId);
+
+        return $role === ProjectRole::MEMBER;
+    }
+
+    public function canListRunsInProject(int $userId, int $projectId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        if ($this->isGlobalAdmin($userId)) {
+            return true;
+        }
+        $role = $this->projectRole($userId, $projectId);
+
+        return $role !== null;
+    }
+
+    public function canReadRun(int $userId, int $projectId, int $runId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        if ($this->isGlobalAdmin($userId)) {
+            return true;
+        }
+        $role = $this->projectRole($userId, $projectId);
+        if ($role === null) {
+            return false;
+        }
+        if ($role === ProjectRole::MEMBER || $role === ProjectRole::VIEWER) {
+            return $this->runBelongsToProject($runId, $projectId);
+        }
+        if ($role === ProjectRole::TESTER) {
+            return $this->runAccessibleByTester($runId, $projectId, $userId);
+        }
+
+        return false;
+    }
+
+    /** @deprecated Use {@see canListRunsInProject} or {@see canReadRun}. */
+    public function canReadRuns(int $userId, int $projectId): bool
+    {
+        return $this->canListRunsInProject($userId, $projectId);
+    }
+
+    public function canExecuteRuns(int $userId, int $projectId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        $role = $this->projectRole($userId, $projectId);
+
+        return $role === ProjectRole::MEMBER || $role === ProjectRole::TESTER;
+    }
+
+    public function canExecuteRun(int $userId, int $projectId, int $runId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        if (!$this->canExecuteRuns($userId, $projectId)) {
+            return false;
+        }
+        if ($this->isGlobalAdmin($userId)) {
+            return true;
+        }
+        $role = $this->projectRole($userId, $projectId);
+        if ($role === ProjectRole::MEMBER) {
+            return $this->runBelongsToProject($runId, $projectId);
+        }
+        if ($role === ProjectRole::TESTER) {
+            return $this->runAccessibleByTester($runId, $projectId, $userId);
+        }
+
+        return false;
+    }
+
+    public function canAssignRuns(int $userId, int $projectId): bool
+    {
+        return $this->canManageRuns($userId, $projectId);
+    }
+
     public function canManageRuns(int $userId, int $projectId): bool
     {
         return $this->canWriteProject($userId, $projectId);
     }
 
-    public function canReadRuns(int $userId, int $projectId): bool
-    {
-        return $this->canAccessProject($userId, $projectId);
-    }
-
     public function canManageProjectMembers(int $userId, int $projectId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
         }
         if ($this->isGlobalAdmin($userId)) {
@@ -169,18 +276,41 @@ final class AuthorizationService
         return $this->projectRole($userId, $projectId) === ProjectRole::MEMBER;
     }
 
-    public function canCreateProjects(int $userId): bool
+    public function canManageUsers(int $userId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
         }
 
-        return $userId > 0;
+        return $this->isGlobalAdmin($userId);
+    }
+
+    public function canCreateProjects(int $userId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return true;
+        }
+        if ($this->isGlobalAdmin($userId)) {
+            return true;
+        }
+
+        $roles = $this->projectRolesForUser($userId);
+        if ($roles === []) {
+            return true;
+        }
+
+        foreach ($roles as $role) {
+            if ($role === ProjectRole::MEMBER) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function canDeleteProject(int $userId, int $projectId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
         }
         if ($this->isGlobalAdmin($userId)) {
@@ -192,7 +322,7 @@ final class AuthorizationService
 
     public function canManageWorkspace(int $userId): bool
     {
-        if (!$this->isAuthEnforced()) {
+        if ($this->isOpenAccess()) {
             return true;
         }
 
@@ -241,5 +371,38 @@ final class AuthorizationService
             'DELETE FROM project_members WHERE project_id = :pid AND user_id = :uid'
         );
         $st->execute(['pid' => $projectId, 'uid' => $userId]);
+    }
+
+    private function runBelongsToProject(int $runId, int $projectId): bool
+    {
+        $st = $this->pdo->prepare(
+            'SELECT 1 FROM test_runs WHERE id = :rid AND project_id = :pid LIMIT 1'
+        );
+        $st->execute(['rid' => $runId, 'pid' => $projectId]);
+
+        return (bool) $st->fetchColumn();
+    }
+
+    private function runAccessibleByTester(int $runId, int $projectId, int $userId): bool
+    {
+        $st = $this->pdo->prepare(
+            'SELECT created_by_user_id, assigned_to_user_id
+             FROM test_runs WHERE id = :rid AND project_id = :pid LIMIT 1'
+        );
+        $st->execute(['rid' => $runId, 'pid' => $projectId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return false;
+        }
+        $createdBy = $row['created_by_user_id'] ?? null;
+        if ($createdBy !== null && $createdBy !== '' && (int) $createdBy === $userId) {
+            return true;
+        }
+        $assignedTo = $row['assigned_to_user_id'] ?? null;
+        if ($assignedTo !== null && $assignedTo !== '' && (int) $assignedTo === $userId) {
+            return true;
+        }
+
+        return false;
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, provide, ref } from 'vue';
+import { computed, onMounted, provide, ref } from 'vue';
 import { RouterLink, RouterView, useRouter } from 'vue-router';
 import { apiFetch, createProject } from '@/api';
 import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
@@ -17,6 +17,14 @@ import {
   refreshProjects,
   setProjectId,
 } from '@/projectContext';
+import {
+  bootstrapDevPermissionsFromUrl,
+  devPermissionsLabel,
+  loadStoredDevPermissions,
+  storeDevPermissions,
+  type DevPermissions,
+} from '@/devPermissions';
+import { canCreateProject, canManageUsers, isViewerOnlyOnAllProjects } from '@/permissions';
 
 const projectCtx = projectContextForProvide();
 provide(PROJECT_CONTEXT_KEY, projectCtx);
@@ -41,7 +49,23 @@ const authSession = ref<AuthSessionPayload | null>(null);
 const logoutBusy = ref(false);
 const preferencesOpen = ref(false);
 
+const canAddProject = computed(() => canCreateProject(authSession.value));
+const showUsersAdmin = computed(() => canManageUsers(authSession.value));
+const showWorkspaceNav = computed(() => !isViewerOnlyOnAllProjects(authSession.value));
+const devPermissions = ref<DevPermissions | null>(loadStoredDevPermissions());
+const devPermissionsBanner = computed(() =>
+  devPermissions.value ? devPermissionsLabel(devPermissions.value) : null,
+);
+
+function clearDevPermissions() {
+  storeDevPermissions(null);
+  devPermissions.value = null;
+  clearAuthSessionCache();
+  window.location.href = window.location.pathname;
+}
+
 onMounted(() => {
+  devPermissions.value = bootstrapDevPermissionsFromUrl();
   void (async () => {
     try {
       authSession.value = await loadAuthSession(true);
@@ -198,6 +222,7 @@ async function submitNewProject(values: Record<string, string | number | boolean
               <option v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
             </select>
             <IconButton
+              v-if="canAddProject"
               type="button"
               accent
               label="New project"
@@ -213,8 +238,9 @@ async function submitNewProject(values: Record<string, string | number | boolean
       </div>
 
       <nav class="nav">
-        <RouterLink to="/" class="nav-link">Workspace</RouterLink>
+        <RouterLink v-if="showWorkspaceNav" to="/" class="nav-link">Workspace</RouterLink>
         <RouterLink to="/runs" class="nav-link">Runs</RouterLink>
+        <RouterLink v-if="showUsersAdmin" to="/admin/users" class="nav-link">Users</RouterLink>
         <RouterLink
           v-if="authSession?.auth_required && !authSession?.user"
           to="/login"
@@ -261,6 +287,10 @@ async function submitNewProject(values: Record<string, string | number | boolean
       @submit="submitNewProject"
       @cancel="newProjectError = null"
     />
+    <p v-if="devPermissionsBanner" class="dev-perms-banner" role="status">
+      Dev permissions: <strong>{{ devPermissionsBanner }}</strong>
+      <button type="button" class="dev-perms-clear" @click="clearDevPermissions">Clear</button>
+    </p>
     <main class="main">
       <RouterView />
     </main>
@@ -465,6 +495,31 @@ a {
 .gear-icon {
   display: block;
   opacity: 0.92;
+}
+
+.dev-perms-banner {
+  margin: 0;
+  padding: 0.45rem 1.25rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--action-purple) 12%, var(--panel));
+  border-bottom: 1px solid var(--border);
+}
+
+.dev-perms-clear {
+  margin-left: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--action-purple);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--action-purple) 50%, var(--border));
+  border-radius: 4px;
+}
+
+.dev-perms-clear:hover {
+  background: color-mix(in srgb, var(--action-purple) 10%, transparent);
 }
 
 .main {
