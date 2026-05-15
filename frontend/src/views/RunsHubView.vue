@@ -506,11 +506,6 @@ watch(canAssign, async (allowed) => {
   width: 100%;
   max-width: 11rem;
   font-size: 0.82rem;
-  padding: 0.25rem 0.35rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface, #fff);
-  color: inherit;
 }
 
 .assignee-label {

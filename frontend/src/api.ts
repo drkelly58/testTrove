@@ -829,12 +829,19 @@ export async function importCasesFile(suiteId: number, file: File): Promise<{ im
   return (JSON.parse(text) as { data: { imported: number } }).data;
 }
 
+export type UserProjectMembership = {
+  project_id: number;
+  project_name: string;
+  role: 'member' | 'tester' | 'viewer';
+};
+
 export type UserAccount = {
   id: number;
   email: string;
   display_name: string;
   role: 'admin' | 'user';
   created_at: string;
+  project_memberships?: UserProjectMembership[];
 };
 
 export async function fetchUsers(): Promise<UserAccount[]> {
@@ -848,6 +855,7 @@ export async function createUser(body: {
   password: string;
   display_name: string;
   role?: 'admin' | 'user';
+  project_memberships?: { project_id: number; role: 'member' | 'tester' | 'viewer' }[];
 }): Promise<UserAccount> {
   const res = await apiFetch(`${base}/api/users`, {
     method: 'POST',
@@ -865,6 +873,7 @@ export async function updateUser(
     display_name?: string;
     role?: 'admin' | 'user';
     password?: string;
+    project_memberships?: { project_id: number; role: 'member' | 'tester' | 'viewer' }[];
   },
 ): Promise<UserAccount> {
   const res = await apiFetch(`${base}/api/users/${userId}`, {

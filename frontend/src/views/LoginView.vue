@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { refreshAuthSession } from '@/authContext';
 import { loadAuthSession, loginWithPassword, type AuthSessionPayload } from '@/authSession';
 
 const route = useRoute();
@@ -74,6 +75,7 @@ async function submitLocal(ev: Event) {
   signingIn.value = true;
   try {
     await loginWithPassword(email.value.trim(), password.value);
+    await refreshAuthSession();
     await router.push(returnPath());
   } catch (e) {
     formError.value = e instanceof Error ? e.message : 'Sign-in failed';

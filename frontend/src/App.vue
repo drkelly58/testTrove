@@ -2,7 +2,7 @@
 import { computed, onMounted, provide, ref } from 'vue';
 import { RouterLink, RouterView, useRouter } from 'vue-router';
 import { apiFetch, createProject } from '@/api';
-import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import { authSession, clearAuthSessionState, refreshAuthSession } from '@/authContext';
 import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import type { FieldDef } from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
@@ -45,7 +45,6 @@ const newProjectFields: FieldDef[] = [
 ];
 
 const router = useRouter();
-const authSession = ref<AuthSessionPayload | null>(null);
 const logoutBusy = ref(false);
 const preferencesOpen = ref(false);
 
@@ -60,23 +59,13 @@ const devPermissionsBanner = computed(() =>
 function clearDevPermissions() {
   storeDevPermissions(null);
   devPermissions.value = null;
-  clearAuthSessionCache();
+  clearAuthSessionState();
   window.location.href = window.location.pathname;
 }
 
 onMounted(() => {
   devPermissions.value = bootstrapDevPermissionsFromUrl();
-  void (async () => {
-    try {
-      authSession.value = await loadAuthSession(true);
-    } catch {
-      authSession.value = null;
-    }
-    const s = authSession.value;
-    if (!s?.auth_required || s.user) {
-      void refreshProjects();
-    }
-  })();
+  void refreshAuthSession();
 });
 
 async function logout() {
@@ -86,9 +75,9 @@ async function logout() {
   logoutBusy.value = true;
   try {
     await apiFetch('/api/auth/logout', { method: 'POST', headers: { Accept: 'application/json' } });
-    clearAuthSessionCache();
+    clearAuthSessionState();
     await router.push('/login');
-    authSession.value = await loadAuthSession(true);
+    await refreshAuthSession();
   } finally {
     logoutBusy.value = false;
   }

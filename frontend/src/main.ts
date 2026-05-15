@@ -1,11 +1,13 @@
 import { createApp } from 'vue';
 import App from './App.vue';
+import { refreshAuthSession } from './authContext';
 import { bootstrapDevPermissionsFromUrl } from './devPermissions';
 import { loadAuthSession } from './authSession';
 import { canManageUsers, isViewerOnlyOnAllProjects } from './permissions';
 import { router } from './router';
 import { bootstrapThemeFromStorage } from './theme';
 import './styles/theme.css';
+import './styles/forms.css';
 
 bootstrapThemeFromStorage();
 bootstrapDevPermissionsFromUrl();
@@ -27,6 +29,12 @@ router.beforeEach(async (to) => {
     return { name: 'home' };
   }
   return true;
+});
+
+router.afterEach((to, from) => {
+  if (from.name === 'login' && to.name !== 'login') {
+    void refreshAuthSession();
+  }
 });
 
 async function boot() {

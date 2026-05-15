@@ -1,11 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
-import type { FieldDef } from '@/components/EntityFormDialog.vue';
-import { createUser, deleteUser, fetchUsers, updateUser, type UserAccount } from '@/api';
+import UserEditorDialog from '@/components/UserEditorDialog.vue';
+import {
+  createUser,
+  deleteUser,
+  fetchProjects,
+  fetchUsers,
+  updateUser,
+  type Project,
+  type UserAccount,
+} from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import { globalRoleLabel, projectRoleLabel } from '@/roles';
+import type { GlobalUserRole } from '@/roles';
+import type { ProjectRole } from '@/authSession';
 
 const authSession = ref<AuthSessionPayload | null>(null);
 void loadAuthSession().then((s) => {
@@ -14,28 +24,22 @@ void loadAuthSession().then((s) => {
 
 const currentUserId = computed(() => authSession.value?.user?.id ?? null);
 
+const projects = ref<Project[]>([]);
 const users = ref<UserAccount[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 
 const createOpen = ref(false);
-const createFields = ref<FieldDef[]>([]);
 const createBusy = ref(false);
 const createError = ref<string | null>(null);
 
 const editUser = ref<UserAccount | null>(null);
-const editFields = ref<FieldDef[]>([]);
 const editBusy = ref(false);
 const editError = ref<string | null>(null);
 
 const deleteTarget = ref<UserAccount | null>(null);
 const deleteOpen = ref(false);
 const deleteBusy = ref(false);
-
-const roleOptions: FieldDef['options'] = [
-  { value: 'user', label: 'user' },
-  { value: 'admin', label: 'admin' },
-];
 
 function formatCreatedAt(raw: string): string {
   const d = new Date(raw);
@@ -45,11 +49,24 @@ function formatCreatedAt(raw: string): string {
   return d.toLocaleString();
 }
 
+function projectAccessSummary(u: UserAccount): string {
+  if (u.role === 'admin') {
+    return 'All projects';
+  }
+  const memberships = u.project_memberships ?? [];
+  if (!memberships.length) {
+    return 'No project access';
+  }
+  return memberships.map((m) => `${m.project_name} (${projectRoleLabel(m.role)})`).join(', ');
+}
+
 async function loadUsers() {
   loading.value = true;
   error.value = null;
   try {
-    users.value = await fetchUsers();
+    const [userRows, projectRows] = await Promise.all([fetchUsers(), fetchProjects()]);
+    users.value = userRows;
+    projects.value = projectRows;
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load users';
     users.value = [];
@@ -62,24 +79,29 @@ void loadUsers();
 
 function openCreate() {
   createError.value = null;
-  createFields.value = [
-    { key: 'email', label: 'Email', kind: 'text', placeholder: 'user@example.com', required: true, autofocus: true },
-    { key: 'display_name', label: 'Display name', kind: 'text', required: true },
-    { key: 'password', label: 'Password', kind: 'text', required: true },
-    { key: 'role', label: 'Role', kind: 'select', initial: 'user', options: roleOptions },
-  ];
   createOpen.value = true;
 }
 
-async function submitCreate(values: Record<string, string | number | boolean | null>) {
+async function submitCreate(payload: {
+  email: string;
+  display_name: string;
+  password?: string;
+  role: GlobalUserRole;
+  project_memberships: { project_id: number; role: ProjectRole }[];
+}) {
+  if (!payload.password) {
+    createError.value = 'Password is required';
+    return;
+  }
   createBusy.value = true;
   createError.value = null;
   try {
     await createUser({
-      email: String(values.email ?? '').trim(),
-      display_name: String(values.display_name ?? '').trim(),
-      password: String(values.password ?? ''),
-      role: (values.role as 'admin' | 'user') || 'user',
+      email: payload.email,
+      display_name: payload.display_name,
+      password: payload.password,
+      role: payload.role,
+      project_memberships: payload.project_memberships,
     });
     createOpen.value = false;
     await loadUsers();
@@ -93,33 +115,20 @@ async function submitCreate(values: Record<string, string | number | boolean | n
 function openEdit(u: UserAccount) {
   editError.value = null;
   editUser.value = u;
-  editFields.value = [
-    { key: 'email', label: 'Email', kind: 'text', initial: u.email, required: true, autofocus: true },
-    { key: 'display_name', label: 'Display name', kind: 'text', initial: u.display_name, required: true },
-    { key: 'role', label: 'Role', kind: 'select', initial: u.role, options: roleOptions },
-    {
-      key: 'password',
-      label: 'New password',
-      kind: 'text',
-      placeholder: 'Leave blank to keep current',
-      help: 'Only set when resetting the password.',
-    },
-  ];
 }
 
 function closeEdit() {
   editUser.value = null;
-  editFields.value = [];
   editError.value = null;
 }
 
-function onEditModel(open: boolean) {
-  if (!open) {
-    closeEdit();
-  }
-}
-
-async function submitEdit(values: Record<string, string | number | boolean | null>) {
+async function submitEdit(payload: {
+  email: string;
+  display_name: string;
+  password?: string;
+  role: GlobalUserRole;
+  project_memberships: { project_id: number; role: ProjectRole }[];
+}) {
   const u = editUser.value;
   if (!u) {
     return;
@@ -127,19 +136,14 @@ async function submitEdit(values: Record<string, string | number | boolean | nul
   editBusy.value = true;
   editError.value = null;
   try {
-    const body: {
-      email: string;
-      display_name: string;
-      role: 'admin' | 'user';
-      password?: string;
-    } = {
-      email: String(values.email ?? '').trim(),
-      display_name: String(values.display_name ?? '').trim(),
-      role: (values.role as 'admin' | 'user') || u.role,
+    const body: Parameters<typeof updateUser>[1] = {
+      email: payload.email,
+      display_name: payload.display_name,
+      role: payload.role,
+      project_memberships: payload.project_memberships,
     };
-    const password = String(values.password ?? '').trim();
-    if (password !== '') {
-      body.password = password;
+    if (payload.password) {
+      body.password = payload.password;
     }
     await updateUser(u.id, body);
     closeEdit();
@@ -204,7 +208,8 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
     <header class="head">
       <h1>Users</h1>
       <p class="sub">
-        Global accounts and roles. Project access is managed separately via project membership in Workspace.
+        Manage global accounts and per-project permissions (member, tester, viewer). Global admins have full access
+        without project membership.
       </p>
       <div class="head-actions">
         <IconButton accent label="Add user" title="Create user account" @click="openCreate">
@@ -224,7 +229,8 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
           <tr>
             <th>Name</th>
             <th>Email</th>
-            <th>Role</th>
+            <th>Global role</th>
+            <th>Project access</th>
             <th>Created</th>
             <th class="col-actions"></th>
           </tr>
@@ -236,7 +242,8 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
               <span v-if="currentUserId === u.id" class="you-badge">You</span>
             </td>
             <td>{{ u.email }}</td>
-            <td><span class="role-pill">{{ u.role }}</span></td>
+            <td><span class="role-pill">{{ globalRoleLabel(u.role) }}</span></td>
+            <td class="access-cell">{{ projectAccessSummary(u) }}</td>
             <td class="created">{{ formatCreatedAt(u.created_at) }}</td>
             <td class="col-actions">
               <div class="row-actions">
@@ -266,10 +273,11 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
       </table>
     </template>
 
-    <EntityFormDialog
+    <UserEditorDialog
       v-model="createOpen"
       title="New user"
-      :fields="createFields"
+      :projects="projects"
+      :require-password="true"
       submit-label="Create"
       :busy="createBusy"
       :error-message="createError"
@@ -277,14 +285,15 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
       @cancel="createError = null"
     />
 
-    <EntityFormDialog
+    <UserEditorDialog
       v-if="editUser"
       :model-value="true"
       title="Edit user"
-      :fields="editFields"
+      :projects="projects"
+      :user="editUser"
       :busy="editBusy"
       :error-message="editError"
-      @update:model-value="onEditModel"
+      @update:model-value="(open) => !open && closeEdit()"
       @submit="submitEdit"
     />
 
@@ -302,7 +311,7 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
 
 <style scoped>
 .users-admin {
-  max-width: 960px;
+  max-width: 1100px;
 }
 
 .head {
@@ -356,6 +365,7 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
   text-align: left;
   padding: 0.55rem 0.65rem;
   border-bottom: 1px solid var(--border);
+  vertical-align: top;
 }
 
 .tbl th {
@@ -382,16 +392,24 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
 
 .role-pill {
   font-size: 0.72rem;
-  text-transform: lowercase;
   padding: 0.15rem 0.45rem;
   border-radius: 6px;
   border: 1px solid var(--border);
   color: var(--muted);
+  white-space: nowrap;
+}
+
+.access-cell {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  max-width: 22rem;
 }
 
 .created {
   color: var(--muted);
   font-size: 0.82rem;
+  white-space: nowrap;
 }
 
 .col-actions {

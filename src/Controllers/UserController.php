@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth\ProjectRole;
 use App\Auth\UserRole;
 use App\JsonRequestBody;
 use App\JsonResponse;
@@ -36,14 +37,17 @@ final class UserController
         $stmt = $this->pdo->query(
             'SELECT id, email, display_name, role, created_at FROM users ORDER BY display_name, email'
         );
+        $membershipsByUser = $this->projectMembershipsByUser();
         $rows = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $userId = (int) $row['id'];
             $rows[] = [
-                'id' => (int) $row['id'],
+                'id' => $userId,
                 'email' => (string) $row['email'],
                 'display_name' => (string) $row['display_name'],
                 'role' => (string) $row['role'],
                 'created_at' => $row['created_at'],
+                'project_memberships' => $membershipsByUser[$userId] ?? [],
             ];
         }
 
@@ -92,14 +96,16 @@ final class UserController
             $id = (int) $this->pdo->query('SELECT LAST_INSERT_ID()')->fetchColumn();
         }
 
-        return JsonResponse::encode($response, [
-            'data' => [
-                'id' => $id,
-                'email' => $email,
-                'display_name' => $displayName,
-                'role' => $role,
-            ],
-        ], 201);
+        if ($role === UserRole::USER && array_key_exists('project_memberships', $data)) {
+            $this->syncProjectMemberships($id, $data['project_memberships']);
+        }
+
+        $row = $this->fetchUserRow($id);
+        if ($row === null) {
+            return JsonResponse::error('user not found', 404);
+        }
+
+        return JsonResponse::encode($response, ['data' => $row], 201);
     }
 
     /** PATCH /api/users/{userId} */
@@ -157,18 +163,34 @@ final class UserController
             $sets[] = 'password_hash = :ph';
             $params['ph'] = password_hash($password, PASSWORD_DEFAULT);
         }
-        if ($sets === []) {
+        $syncMemberships = array_key_exists('project_memberships', $data);
+        $effectiveRole = array_key_exists('role', $params)
+            ? (string) $params['role']
+            : $this->fetchUserGlobalRole($userId);
+        if ($sets === [] && !$syncMemberships) {
             return JsonResponse::error('No user fields to update', 422);
         }
 
-        try {
-            $upd = $this->pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id');
-            $upd->execute($params);
-        } catch (\PDOException $e) {
-            if (str_contains(strtolower($e->getMessage()), 'unique') || str_contains(strtolower($e->getMessage()), 'duplicate')) {
-                return JsonResponse::error('email already registered', 409);
+        if ($sets !== []) {
+            try {
+                $upd = $this->pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id');
+                $upd->execute($params);
+            } catch (\PDOException $e) {
+                if (str_contains(strtolower($e->getMessage()), 'unique') || str_contains(strtolower($e->getMessage()), 'duplicate')) {
+                    return JsonResponse::error('email already registered', 409);
+                }
+                throw $e;
             }
-            throw $e;
+        }
+
+        if ($syncMemberships) {
+            if ($effectiveRole === UserRole::ADMIN) {
+                $this->clearProjectMemberships($userId);
+            } else {
+                $this->syncProjectMemberships($userId, $data['project_memberships']);
+            }
+        } elseif (array_key_exists('role', $data) && $effectiveRole === UserRole::ADMIN) {
+            $this->clearProjectMemberships($userId);
         }
 
         $row = $this->fetchUserRow($userId);
@@ -214,7 +236,7 @@ final class UserController
     }
 
     /**
-     * @return array{id: int, email: string, display_name: string, role: string, created_at: mixed}|null
+     * @return array{id: int, email: string, display_name: string, role: string, created_at: mixed, project_memberships: list<array{project_id: int, project_name: string, role: string}>}|null
      */
     private function fetchUserRow(int $userId): ?array
     {
@@ -227,12 +249,112 @@ final class UserController
             return null;
         }
 
+        $memberships = $this->projectMembershipsByUser()[$userId] ?? [];
+
         return [
             'id' => (int) $row['id'],
             'email' => (string) $row['email'],
             'display_name' => (string) $row['display_name'],
             'role' => (string) $row['role'],
             'created_at' => $row['created_at'],
+            'project_memberships' => $memberships,
         ];
+    }
+
+    private function fetchUserGlobalRole(int $userId): string
+    {
+        $st = $this->pdo->prepare('SELECT role FROM users WHERE id = :id LIMIT 1');
+        $st->execute(['id' => $userId]);
+        $role = $st->fetchColumn();
+
+        return $role !== false ? (string) $role : UserRole::USER;
+    }
+
+    /**
+     * @return array<int, list<array{project_id: int, project_name: string, role: string}>>
+     */
+    private function projectMembershipsByUser(): array
+    {
+        if (!$this->tableExists('project_members')) {
+            return [];
+        }
+
+        $stmt = $this->pdo->query(
+            'SELECT pm.user_id, pm.project_id, p.name AS project_name, pm.role
+             FROM project_members pm
+             INNER JOIN projects p ON p.id = pm.project_id
+             ORDER BY p.name, pm.user_id'
+        );
+        $byUser = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $userId = (int) $row['user_id'];
+            $byUser[$userId][] = [
+                'project_id' => (int) $row['project_id'],
+                'project_name' => (string) $row['project_name'],
+                'role' => (string) $row['role'],
+            ];
+        }
+
+        return $byUser;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'sqlite') {
+            $st = $this->pdo->prepare(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :t LIMIT 1"
+            );
+            $st->execute(['t' => $table]);
+
+            return (bool) $st->fetchColumn();
+        }
+
+        return true;
+    }
+
+    private function clearProjectMemberships(int $userId): void
+    {
+        if (!$this->tableExists('project_members')) {
+            return;
+        }
+        $del = $this->pdo->prepare('DELETE FROM project_members WHERE user_id = :uid');
+        $del->execute(['uid' => $userId]);
+    }
+
+    /** @param mixed $raw */
+    private function syncProjectMemberships(int $userId, mixed $raw): void
+    {
+        if (!$this->tableExists('project_members')) {
+            return;
+        }
+        if (!is_array($raw)) {
+            return;
+        }
+
+        $this->clearProjectMemberships($userId);
+        $auth = $this->authorizationService();
+        foreach ($raw as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $projectId = (int) ($item['project_id'] ?? 0);
+            $role = trim((string) ($item['role'] ?? ''));
+            if ($projectId <= 0 || !ProjectRole::isValid($role)) {
+                continue;
+            }
+            if (!$this->projectExists($projectId)) {
+                continue;
+            }
+            $auth->assignProjectMember($projectId, $userId, $role);
+        }
+    }
+
+    private function projectExists(int $projectId): bool
+    {
+        $st = $this->pdo->prepare('SELECT 1 FROM projects WHERE id = :id LIMIT 1');
+        $st->execute(['id' => $projectId]);
+
+        return (bool) $st->fetchColumn();
     }
 }
