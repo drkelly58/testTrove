@@ -5,6 +5,5 @@
 /storage/*.sqlite
 /storage/*.sqlite-journal
 /storage/sessions/*
-/public/assets/index-*.js
-/public/assets/index-*.css
+/public/app/
 .DS_Store

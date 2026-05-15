@@ -9,4 +9,22 @@ if ($uri !== '/' && is_file($file)) {
     return false;
 }
 
+$spaIndex = __DIR__ . '/app/index.html';
+if (is_file($spaIndex)) {
+    if ($uri === '/' || $uri === '') {
+        header('Location: /app/', true, 302);
+        return true;
+    }
+    if ($uri === '/app' || $uri === '/app/') {
+        header('Content-Type: text/html; charset=UTF-8');
+        readfile($spaIndex);
+        return true;
+    }
+    if (str_starts_with($uri, '/app/')) {
+        header('Content-Type: text/html; charset=UTF-8');
+        readfile($spaIndex);
+        return true;
+    }
+}
+
 require __DIR__ . '/index.php';
