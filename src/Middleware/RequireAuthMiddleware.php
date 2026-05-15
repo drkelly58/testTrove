@@ -12,7 +12,7 @@ use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * When any OAuth provider is configured, all /api routes except /api/auth/* and /api/health require a session.
+ * When OAuth and/or local password login is enabled, all /api routes except /api/auth/* and /api/health require a session.
  */
 final class RequireAuthMiddleware implements MiddlewareInterface
 {

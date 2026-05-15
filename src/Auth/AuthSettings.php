@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Auth;
 
 /**
- * OAuth client configuration from environment. When any provider is configured,
+ * Auth configuration from environment. When OAuth and/or local password login is enabled,
  * {@see self::isAuthRequired()} is true and the API expects a PHP session (see auth middleware).
  */
 final class AuthSettings
@@ -26,8 +26,19 @@ final class AuthSettings
         return trim((string) ($this->env[$key] ?? ''));
     }
 
+    public function isLocalAuthEnabled(): bool
+    {
+        $v = strtolower($this->str('AUTH_LOCAL_ENABLED'));
+
+        return $v === '1' || $v === 'true' || $v === 'yes';
+    }
+
     public function isAuthRequired(): bool
     {
+        if ($this->isLocalAuthEnabled()) {
+            return true;
+        }
+
         foreach (['OAUTH_MICROSOFT_CLIENT_ID', 'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_GITHUB_CLIENT_ID', 'OAUTH_GENERIC_CLIENT_ID'] as $k) {
             if ($this->str($k) !== '') {
                 return true;
@@ -35,6 +46,23 @@ final class AuthSettings
         }
 
         return false;
+    }
+
+    public function localBootstrapEmail(): string
+    {
+        return strtolower(trim($this->str('AUTH_LOCAL_BOOTSTRAP_EMAIL')));
+    }
+
+    public function localBootstrapPassword(): string
+    {
+        return $this->str('AUTH_LOCAL_BOOTSTRAP_PASSWORD');
+    }
+
+    public function localBootstrapDisplayName(): string
+    {
+        $n = $this->str('AUTH_LOCAL_BOOTSTRAP_DISPLAY_NAME');
+
+        return $n !== '' ? $n : 'Local admin';
     }
 
     /** Public site URL (no trailing slash), used for OAuth redirect_uri. */

@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
-import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { loadAuthSession, loginWithPassword, type AuthSessionPayload } from '@/authSession';
 
 const route = useRoute();
+const router = useRouter();
 const session = ref<AuthSessionPayload | null>(null);
 const loadError = ref<string | null>(null);
+const email = ref('');
+const password = ref('');
+const signingIn = ref(false);
+const formError = ref<string | null>(null);
 
 const errHint = computed(() => {
   const raw = typeof route.query.err === 'string' ? route.query.err : '';
@@ -39,6 +44,9 @@ const errHint = computed(() => {
   return 'Sign-in failed. Please try again or contact support.';
 });
 
+const showOAuth = computed(() => (session.value?.providers.length ?? 0) > 0);
+const showLocal = computed(() => session.value?.local_login_enabled === true);
+
 onMounted(() => {
   void (async () => {
     try {
@@ -54,37 +62,85 @@ function loginUrl(providerId: string): string {
   const ret = encodeURIComponent(typeof route.query.return_to === 'string' ? route.query.return_to : '/');
   return `${base}/api/auth/login/${encodeURIComponent(providerId)}?return_to=${ret}`;
 }
+
+function returnPath(): string {
+  const rt = typeof route.query.return_to === 'string' ? route.query.return_to : '/';
+  return rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
+}
+
+async function submitLocal(ev: Event) {
+  ev.preventDefault();
+  formError.value = null;
+  signingIn.value = true;
+  try {
+    await loginWithPassword(email.value.trim(), password.value);
+    await router.push(returnPath());
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : 'Sign-in failed';
+  } finally {
+    signingIn.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="login-page">
     <header class="head">
       <h1>Sign in</h1>
-      <p class="lede">Use your organization or social account to continue.</p>
+      <p v-if="showLocal && !showOAuth" class="lede">Use your email and password to continue.</p>
+      <p v-else-if="showLocal && showOAuth" class="lede">Sign in with email and password or an external provider.</p>
+      <p v-else class="lede">Use your organization or social account to continue.</p>
     </header>
 
     <div v-if="loadError" class="banner err">{{ loadError }}</div>
     <div v-else-if="!session" class="banner muted">Loading…</div>
     <template v-else>
       <div v-if="errHint" class="banner err">{{ errHint }}</div>
+      <div v-if="formError" class="banner err">{{ formError }}</div>
+
       <div v-if="!session.auth_required" class="card">
         <p class="hint">
-          OAuth sign-in is not configured on this server. Set provider client IDs and secrets in the environment, or
-          leave them unset for open local access.
+          Sign-in is not configured on this server. Set <code>AUTH_LOCAL_ENABLED</code> and/or OAuth client
+          credentials in the environment, or leave them unset for open local access.
         </p>
         <RouterLink to="/" class="btn primary">Back to workspace</RouterLink>
       </div>
-      <div v-else-if="session.providers.length === 0" class="card">
-        <p class="hint">No OAuth providers are fully configured (each needs a client id and secret).</p>
+
+      <div v-else-if="!showLocal && session.providers.length === 0" class="card">
+        <p class="hint">No sign-in methods are fully configured.</p>
         <RouterLink to="/" class="btn">Back</RouterLink>
       </div>
+
       <div v-else class="card">
-        <p class="hint">You will be redirected to your provider, then returned here.</p>
-        <ul class="providers">
+        <form v-if="showLocal" class="local-form" @submit="submitLocal">
+          <label class="field">
+            <span class="lab">Email</span>
+            <input v-model="email" type="email" class="input" autocomplete="username" required />
+          </label>
+          <label class="field">
+            <span class="lab">Password</span>
+            <input
+              v-model="password"
+              type="password"
+              class="input"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <button type="submit" class="btn primary block" :disabled="signingIn">
+            {{ signingIn ? 'Signing in…' : 'Sign in' }}
+          </button>
+        </form>
+
+        <p v-if="showLocal && showOAuth" class="divider" role="separator">or</p>
+
+        <ul v-if="showOAuth" class="providers">
           <li v-for="p in session.providers" :key="p.id">
-            <a class="btn primary provider-btn" :href="loginUrl(p.id)">{{ p.label }}</a>
+            <a class="btn provider-btn" :href="loginUrl(p.id)">{{ p.label }}</a>
           </li>
         </ul>
+
+        <p v-if="showOAuth" class="hint oauth-hint">External providers redirect away from this page, then return here.</p>
       </div>
     </template>
   </div>
@@ -141,6 +197,59 @@ function loginUrl(providerId: string): string {
   line-height: 1.45;
 }
 
+.hint code {
+  font-size: 0.82em;
+}
+
+.oauth-hint {
+  margin: 0.85rem 0 0;
+}
+
+.local-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.lab {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.input {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.divider {
+  margin: 1.1rem 0;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .providers {
   list-style: none;
   margin: 0;
@@ -167,6 +276,20 @@ function loginUrl(providerId: string): string {
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  background: var(--panel-2);
+}
+
+.btn.block {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .btn.primary {

@@ -8,7 +8,9 @@ use App\Auth\AuthSettings;
 use App\Auth\OAuthProfile;
 use App\Auth\OAuthProviderFactory;
 use App\Auth\OAuthResourceProfileMapper;
+use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\LocalPasswordAuthenticator;
 use App\Services\OAuthUserProvisioner;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use PDO;
@@ -41,10 +43,41 @@ final class AuthController
         return JsonResponse::encode($response, [
             'data' => [
                 'auth_required' => $this->settings->isAuthRequired(),
+                'local_login_enabled' => $this->settings->isLocalAuthEnabled(),
                 'providers' => $this->settings->listProviders(),
                 'user' => $user,
             ],
         ]);
+    }
+
+    public function loginLocal(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        if (!$this->settings->isLocalAuthEnabled()) {
+            return JsonResponse::error('Local sign-in is not enabled', 404);
+        }
+
+        try {
+            $data = JsonRequestBody::decodeAssoc($request);
+        } catch (\JsonException $e) {
+            return JsonResponse::error('Invalid JSON: ' . $e->getMessage(), 422);
+        }
+
+        $email = trim((string) ($data['email'] ?? ''));
+        $password = (string) ($data['password'] ?? '');
+        if ($email === '' || $password === '') {
+            return JsonResponse::error('Email and password are required', 422);
+        }
+
+        $local = new LocalPasswordAuthenticator($this->pdo);
+        $user = $local->authenticate($email, $password);
+        if ($user === null) {
+            return JsonResponse::error('Invalid email or password', 401);
+        }
+
+        $_SESSION['user_id'] = $user['id'];
+        session_regenerate_id(true);
+
+        return JsonResponse::encode($response, ['data' => ['user' => $user]]);
     }
 
     public function login(

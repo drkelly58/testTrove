@@ -12,6 +12,7 @@ use App\Controllers\SuiteController;
 use App\Controllers\WorkspaceExchangeController;
 use App\Database;
 use App\JsonResponse;
+use App\Services\LocalUserBootstrap;
 use App\Middleware\CorsMiddleware;
 use App\Middleware\RequireAuthMiddleware;
 use App\Middleware\SessionMiddleware;
@@ -68,6 +69,7 @@ if ($errorHandler instanceof ErrorHandler) {
 }
 
 $authSettings = AuthSettings::fromGlobals($_ENV);
+LocalUserBootstrap::ensureFromEnv($pdo, $authSettings);
 $corsOrigin = $_ENV['CORS_ORIGIN'] ?? null;
 $app->add(new RequireAuthMiddleware($authSettings));
 $app->add(new SessionMiddleware($root));
@@ -75,6 +77,7 @@ $app->add(new CorsMiddleware($corsOrigin));
 
 $auth = new AuthController($pdo, $authSettings);
 $app->get('/api/auth/session', [$auth, 'session']);
+$app->post('/api/auth/login/local', [$auth, 'loginLocal']);
 $app->get('/api/auth/login/{provider}', [$auth, 'login']);
 $app->get('/api/auth/callback/{provider}', [$auth, 'callback']);
 $app->post('/api/auth/logout', [$auth, 'logout']);
