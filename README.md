@@ -1,4 +1,4 @@
-# TestTrove
+<h1><img src="public/favicon.svg" alt="" height="36" /> TestTrove</h1>
 
 TestTrove is a **test case management** application: organize projects, suites, sections, and cases with steps and variants; execute **test runs** with per-step results; and collaborate with **role-based access**. The backend is a **PHP JSON API** designed to run on typical **shared hosting** (Apache + `mod_rewrite`). The UI is a **Vue 3** single-page app served from `/app/` after a production build.
 
