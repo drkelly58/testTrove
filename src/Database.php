@@ -125,6 +125,8 @@ final class Database
             self::runItemScreenshotsMigrations($pdo, $driver);
             self::testCaseStepsRelationalMigrations($pdo, $driver);
             self::oauthIdentityMigrations($pdo, $driver);
+            self::userPreferencesMigrations($pdo, $driver);
+            self::projectMembersMigrations($pdo, $driver);
 
             return;
         }
@@ -136,6 +138,318 @@ final class Database
         self::runItemScreenshotsMigrations($pdo, $driver);
         self::testCaseStepsRelationalMigrations($pdo, $driver);
         self::oauthIdentityMigrations($pdo, $driver);
+        self::userPreferencesMigrations($pdo, $driver);
+        self::projectMembersMigrations($pdo, $driver);
+    }
+
+    /**
+     * project_members table, users.role admin|user, backfill memberships from legacy global roles.
+     */
+    private static function projectMembersMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'projects') || !self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+
+        foreach (self::projectMembersCreateStatements($driver) as $stmt) {
+            self::safeExec($pdo, $stmt, ['already exists', 'duplicate']);
+        }
+
+        if (!self::tableExists($pdo, $driver, 'project_members')) {
+            return;
+        }
+
+        self::backfillProjectMembersFromLegacyUserRoles($pdo);
+        self::userGlobalRoleMigrations($pdo, $driver);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function projectMembersCreateStatements(string $driver): array
+    {
+        return match ($driver) {
+            'mysql' => [
+                "CREATE TABLE IF NOT EXISTS project_members (
+  project_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(32) NOT NULL,
+  created_at DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (project_id, user_id),
+  KEY idx_project_members_user (user_id),
+  CONSTRAINT fk_project_members_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  CONSTRAINT fk_project_members_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT project_members_role_chk CHECK (role IN ('member', 'tester', 'viewer'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+            ],
+            'pgsql' => [
+                "CREATE TABLE IF NOT EXISTS project_members (
+  project_id BIGINT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('member', 'tester', 'viewer')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (project_id, user_id)
+)",
+                'CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members (user_id)',
+            ],
+            default => [
+                "CREATE TABLE IF NOT EXISTS project_members (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('member', 'tester', 'viewer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, user_id)
+)",
+                'CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)',
+            ],
+        };
+    }
+
+    private static function backfillProjectMembersFromLegacyUserRoles(PDO $pdo): void
+    {
+        $count = (int) $pdo->query('SELECT COUNT(*) FROM project_members')->fetchColumn();
+        if ($count > 0) {
+            return;
+        }
+
+        $pdo->exec(
+            "INSERT INTO project_members (project_id, user_id, role)
+             SELECT p.id, u.id,
+               CASE WHEN u.role = 'viewer' THEN 'viewer' ELSE 'member' END
+             FROM projects p
+             CROSS JOIN users u
+             WHERE u.role IS NOT NULL AND u.role <> 'admin'"
+        );
+    }
+
+    private static function userGlobalRoleMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+
+        self::safeExec(
+            $pdo,
+            "UPDATE users SET role = 'user' WHERE role IN ('member', 'viewer', 'tester')",
+            [],
+        );
+
+        if ($driver === 'sqlite') {
+            self::sqliteRebuildUsersIfUserRoleDisallowed($pdo);
+
+            return;
+        }
+        if ($driver === 'mysql') {
+            self::mysqlUpgradeUsersRoleCheck($pdo);
+
+            return;
+        }
+        if ($driver === 'pgsql') {
+            self::pgsqlUpgradeUsersRoleCheck($pdo);
+        }
+    }
+
+    private static function sqliteRebuildUsersIfUserRoleDisallowed(PDO $pdo): void
+    {
+        if (self::sqliteUsersAcceptsRoleUser($pdo)) {
+            return;
+        }
+
+        $pdo->exec('BEGIN IMMEDIATE');
+        try {
+            $pdo->exec(
+                "CREATE TABLE users_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT,
+  display_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+  preferences TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  oauth_provider TEXT,
+  oauth_subject TEXT,
+  picture_url TEXT
+)"
+            );
+            $cols = self::sqliteUsersColumnList($pdo);
+            $select = 'id, email, password_hash, display_name, '
+                . "CASE WHEN role = 'admin' THEN 'admin' ELSE 'user' END AS role, "
+                . "COALESCE(preferences, '{}') AS preferences, created_at";
+            if (in_array('oauth_provider', $cols, true)) {
+                $select .= ', oauth_provider, oauth_subject, picture_url';
+            } else {
+                $select .= ', NULL, NULL, NULL';
+            }
+            $pdo->exec('INSERT INTO users_new (' . self::sqliteUsersInsertColumns($cols) . ") SELECT {$select} FROM users");
+            $pdo->exec('DROP TABLE users');
+            $pdo->exec('ALTER TABLE users_new RENAME TO users');
+            $pdo->exec(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_oauth ON users(oauth_provider, oauth_subject)
+                 WHERE oauth_provider IS NOT NULL AND oauth_subject IS NOT NULL'
+            );
+            $maxId = (int) $pdo->query('SELECT COALESCE(MAX(id), 0) FROM users')->fetchColumn();
+            if ($maxId > 0) {
+                $pdo->exec("DELETE FROM sqlite_sequence WHERE name = 'users'");
+                $pdo->exec("INSERT INTO sqlite_sequence (name, seq) VALUES ('users', {$maxId})");
+            }
+            $pdo->exec('COMMIT');
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->exec('ROLLBACK');
+            }
+            throw $e;
+        }
+    }
+
+    /** @return list<string> */
+    private static function sqliteUsersColumnList(PDO $pdo): array
+    {
+        $st = $pdo->query('PRAGMA table_info(users)');
+        if ($st === false) {
+            return [];
+        }
+        $cols = [];
+        while (($row = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $cols[] = (string) ($row['name'] ?? '');
+        }
+
+        return $cols;
+    }
+
+    /** @param list<string> $cols */
+    private static function sqliteUsersInsertColumns(array $cols): string
+    {
+        $base = 'id, email, password_hash, display_name, role, preferences, created_at';
+        if (in_array('oauth_provider', $cols, true)) {
+            return $base . ', oauth_provider, oauth_subject, picture_url';
+        }
+
+        return $base;
+    }
+
+    private static function sqliteUsersAcceptsRoleUser(PDO $pdo): bool
+    {
+        try {
+            $pdo->exec('SAVEPOINT sp_users_role_user');
+            $stmt = $pdo->prepare(
+                "INSERT INTO users (email, password_hash, display_name, role)
+                 VALUES ('__tt_role_probe__@invalid.local', 'x', 'probe', 'user')"
+            );
+            $stmt->execute();
+            $id = (int) $pdo->lastInsertId();
+            $pdo->exec('ROLLBACK TO SAVEPOINT sp_users_role_user');
+            $pdo->exec('RELEASE SAVEPOINT sp_users_role_user');
+            if ($id > 0) {
+                $pdo->exec('DELETE FROM users WHERE id = ' . $id);
+            }
+
+            return true;
+        } catch (PDOException $e) {
+            try {
+                $pdo->exec('ROLLBACK TO SAVEPOINT sp_users_role_user');
+            } catch (PDOException) {
+            }
+            try {
+                $pdo->exec('RELEASE SAVEPOINT sp_users_role_user');
+            } catch (PDOException) {
+            }
+            $msg = strtolower($e->getMessage());
+
+            return !str_contains($msg, 'check') && !str_contains($msg, 'constraint');
+        }
+    }
+
+    private static function mysqlUpgradeUsersRoleCheck(PDO $pdo): void
+    {
+        $stmt = $pdo->query(
+            "SELECT cc.constraint_name
+             FROM information_schema.check_constraints cc
+             INNER JOIN information_schema.table_constraints tc
+               ON tc.constraint_schema = cc.constraint_schema
+              AND tc.constraint_name = cc.constraint_name
+             WHERE tc.table_schema = DATABASE()
+               AND tc.table_name = 'users'
+               AND tc.constraint_type = 'CHECK'
+               AND cc.check_clause LIKE '%role%'
+               AND cc.check_clause NOT LIKE '%user%'"
+        );
+        if ($stmt !== false) {
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
+                if (!is_string($name) || $name === '') {
+                    continue;
+                }
+                $ident = '`' . str_replace('`', '``', $name) . '`';
+                self::safeExec($pdo, "ALTER TABLE users DROP CHECK {$ident}", ['check', "doesn't exist", 'unknown']);
+            }
+        }
+        self::safeExec(
+            $pdo,
+            "ALTER TABLE users ADD CONSTRAINT users_role_chk CHECK (role IN ('admin', 'user'))",
+            ['duplicate', 'already exists'],
+        );
+    }
+
+    private static function pgsqlUpgradeUsersRoleCheck(PDO $pdo): void
+    {
+        $stmt = $pdo->query(
+            "SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+             FROM pg_constraint c
+             INNER JOIN pg_class rel ON rel.oid = c.conrelid
+             INNER JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+             WHERE rel.relname = 'users'
+               AND nsp.nspname = CURRENT_SCHEMA()
+               AND c.contype = 'c'"
+        );
+        if ($stmt !== false) {
+            while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+                $def = strtolower((string) ($row['def'] ?? ''));
+                if (!str_contains($def, 'role')) {
+                    continue;
+                }
+                if (str_contains($def, "'user'")) {
+                    continue;
+                }
+                $name = (string) ($row['conname'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+                $ident = '"' . str_replace('"', '""', $name) . '"';
+                self::safeExec($pdo, "ALTER TABLE users DROP CONSTRAINT {$ident}", ['does not exist']);
+            }
+        }
+        self::safeExec(
+            $pdo,
+            "ALTER TABLE users ADD CONSTRAINT users_role_chk CHECK (role IN ('admin', 'user'))",
+            ['already exists', 'duplicate'],
+        );
+    }
+
+    /** JSON UI preferences on users (default project, run overview layout, etc.). */
+    private static function userPreferencesMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+        if (self::columnExists($pdo, $driver, 'users', 'preferences')) {
+            return;
+        }
+
+        if ($driver === 'sqlite') {
+            $pdo->exec("ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'");
+        } elseif ($driver === 'mysql') {
+            self::safeExec(
+                $pdo,
+                "ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL",
+                ['duplicate column'],
+            );
+            self::safeExec(
+                $pdo,
+                "UPDATE users SET preferences = '{}' WHERE preferences IS NULL OR preferences = ''",
+                [],
+            );
+        } elseif ($driver === 'pgsql') {
+            $pdo->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences TEXT NOT NULL DEFAULT '{}'");
+        }
     }
 
     /**

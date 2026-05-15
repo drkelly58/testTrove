@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { inject, ref, watch } from 'vue';
+import { computed, inject, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
 import type { FieldDef } from '@/components/EntityFormDialog.vue';
 import { deleteRun, fetchProjectRuns, updateRun, type RunSummary } from '@/api';
+import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
+import { canExecuteRuns, canWriteCatalog } from '@/permissions';
 
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
+
+const authSession = ref<AuthSessionPayload | null>(null);
+void loadAuthSession().then((s) => {
+  authSession.value = s;
+});
+const canWrite = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
+const canRun = computed(() => canExecuteRuns(authSession.value, projectCtx.projectId));
 
 const runs = ref<RunSummary[]>([]);
 const runsLoading = ref(false);
@@ -217,13 +226,14 @@ watch(
                 <td class="col-actions">
                   <div class="run-row-actions">
                     <RouterLink class="link" :to="'/runs/' + r.id + '/overview'">Overview</RouterLink>
-                    <RouterLink class="link" :to="'/runs/' + r.id">Continue</RouterLink>
-                    <IconButton label="Edit run" title="Edit run name and state" @click="openEditRun(r)">
+                    <RouterLink v-if="canRun" class="link" :to="'/runs/' + r.id">Continue</RouterLink>
+                    <IconButton v-if="canRun" label="Edit run" title="Edit run name and state" @click="openEditRun(r)">
                       <svg viewBox="0 0 24 24">
                         <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
                       </svg>
                     </IconButton>
                     <IconButton
+                      v-if="canWrite"
                       danger
                       label="Delete this run"
                       title="Delete this run (removes all result rows)"

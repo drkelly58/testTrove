@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\UserPreferences;
 use PDO;
 
 /**
@@ -16,7 +17,7 @@ final class LocalPasswordAuthenticator
     }
 
     /**
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null}|null
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}|null
      */
     public function authenticate(string $email, string $password): ?array
     {
@@ -26,7 +27,7 @@ final class LocalPasswordAuthenticator
         }
 
         $stmt = $this->pdo->prepare(
-            'SELECT id, email, display_name, role, picture_url, password_hash, oauth_provider, oauth_subject
+            'SELECT id, email, display_name, role, picture_url, preferences, password_hash, oauth_provider, oauth_subject
              FROM users WHERE LOWER(TRIM(email)) = :e LIMIT 1'
         );
         $stmt->execute(['e' => $emailNorm]);
@@ -57,7 +58,7 @@ final class LocalPasswordAuthenticator
     /**
      * @param array<string, mixed> $row
      *
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null}
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
      */
     private function publicRow(array $row): array
     {
@@ -69,6 +70,7 @@ final class LocalPasswordAuthenticator
             'display_name' => (string) $row['display_name'],
             'role' => (string) $row['role'],
             'picture_url' => $pic !== null && $pic !== '' ? (string) $pic : null,
+            'preferences' => UserPreferences::decode(isset($row['preferences']) ? (string) $row['preferences'] : null),
         ];
     }
 }

@@ -6,14 +6,22 @@ namespace App\Controllers;
 
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
+use App\Services\ProjectScopeResolver;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 final class ProjectController
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    use AuthorizesApiAccess;
+
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     /**
@@ -81,8 +89,27 @@ final class ProjectController
 
     public function list(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
-        $stmt = $this->pdo->query('SELECT id, name, description, created_at FROM projects ORDER BY id DESC');
+        $auth = $this->authorizationService();
+        if ($auth->isAuthEnforced()) {
+            $userId = $auth->requireUserId();
+            if ($auth->isGlobalAdmin($userId)) {
+                $stmt = $this->pdo->query(
+                    "SELECT id, name, description, created_at, 'member' AS my_role FROM projects ORDER BY id DESC"
+                );
+            } else {
+                $stmt = $this->pdo->prepare(
+                    'SELECT p.id, p.name, p.description, p.created_at, pm.role AS my_role
+                     FROM projects p
+                     INNER JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = :uid
+                     ORDER BY p.id DESC'
+                );
+                $stmt->execute(['uid' => $userId]);
+            }
+        } else {
+            $stmt = $this->pdo->query('SELECT id, name, description, created_at FROM projects ORDER BY id DESC');
+        }
         $rows = $stmt->fetchAll();
+
         return JsonResponse::encode($response, ['data' => $rows]);
     }
 
@@ -97,6 +124,9 @@ final class ProjectController
         $projectId = (int) ($args['projectId'] ?? 0);
         if ($projectId <= 0) {
             return JsonResponse::error('Invalid project id', 422);
+        }
+        if ($denied = $this->authorizeProjectDelete($projectId)) {
+            return $denied;
         }
         $stmt = $this->pdo->prepare('SELECT id, name FROM projects WHERE id = :id LIMIT 1');
         $stmt->execute(['id' => $projectId]);
@@ -211,6 +241,10 @@ final class ProjectController
 
     public function create(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
+        if ($denied = $this->authorizeCreateProject()) {
+            return $denied;
+        }
+
         try {
             try {
                 $data = $this->readJsonBody($request);
@@ -233,6 +267,14 @@ final class ProjectController
                 return JsonResponse::error($detail, 500);
             }
 
+            $auth = $this->authorizationService();
+            if ($auth->isAuthEnforced()) {
+                $userId = $auth->requireUserId();
+                if (!$auth->isGlobalAdmin($userId)) {
+                    $auth->assignProjectMember($id, $userId, 'member');
+                }
+            }
+
             return JsonResponse::encode($response, ['data' => ['id' => $id, 'name' => $name, 'description' => $description]], 201);
         } catch (\Throwable $e) {
             error_log('POST /api/projects unexpected: ' . $e->getMessage());
@@ -248,6 +290,9 @@ final class ProjectController
         $projectId = (int) ($args['projectId'] ?? 0);
         if ($projectId <= 0) {
             return JsonResponse::error('Invalid project id', 422);
+        }
+        if ($denied = $this->authorizeProjectWrite($projectId)) {
+            return $denied;
         }
         $stmt = $this->pdo->prepare('SELECT id FROM projects WHERE id = :id LIMIT 1');
         $stmt->execute(['id' => $projectId]);

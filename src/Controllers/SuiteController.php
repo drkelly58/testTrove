@@ -6,6 +6,8 @@ namespace App\Controllers;
 
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
+use App\Services\ProjectScopeResolver;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -13,13 +15,22 @@ use Psr\Http\Message\ServerRequestInterface;
 
 final class SuiteController
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    use AuthorizesApiAccess;
+
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     public function list(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $projectId = (int) ($args['projectId'] ?? 0);
+        if ($denied = $this->authorizeProjectRead($projectId)) {
+            return $denied;
+        }
         $stmt = $this->pdo->prepare(
             'SELECT id, project_id, name, created_at FROM test_suites WHERE project_id = :pid ORDER BY id'
         );
@@ -30,6 +41,9 @@ final class SuiteController
     public function create(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $projectId = (int) ($args['projectId'] ?? 0);
+        if ($denied = $this->authorizeProjectWrite($projectId)) {
+            return $denied;
+        }
         try {
             $data = JsonRequestBody::decodeAssoc($request);
         } catch (\JsonException $e) {
@@ -55,6 +69,9 @@ final class SuiteController
         $suiteId = (int) ($args['suiteId'] ?? 0);
         if ($projectId <= 0 || $suiteId <= 0) {
             return JsonResponse::error('Invalid project or suite id', 422);
+        }
+        if ($denied = $this->authorizeProjectWrite($projectId)) {
+            return $denied;
         }
 
         $stmt = $this->pdo->prepare(
@@ -132,6 +149,9 @@ final class SuiteController
         $suiteId = (int) ($args['suiteId'] ?? 0);
         if ($projectId <= 0 || $suiteId <= 0) {
             return JsonResponse::error('Invalid project or suite id', 422);
+        }
+        if ($denied = $this->authorizeProjectWrite($projectId)) {
+            return $denied;
         }
 
         $stmt = $this->pdo->prepare(
@@ -239,6 +259,9 @@ final class SuiteController
     {
         $projectId = (int) ($args['projectId'] ?? 0);
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeProjectWrite($projectId)) {
+            return $denied;
+        }
 
         $stmt = $this->pdo->prepare(
             'SELECT id, name FROM test_suites WHERE id = :sid AND project_id = :pid LIMIT 1'

@@ -6,7 +6,9 @@ namespace App\Controllers;
 
 use App\IO\XlsxImportExportStub;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
 use App\Services\CaseExchangeService;
+use App\Services\ProjectScopeResolver;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -18,8 +20,14 @@ use Slim\Psr7\Response;
  */
 final class WorkspaceExchangeController
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    use AuthorizesApiAccess;
+
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     public function export(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -31,6 +39,9 @@ final class WorkspaceExchangeController
 
         if ($projectId <= 0) {
             return JsonResponse::error('project_id is required', 422);
+        }
+        if ($denied = $this->authorizeProjectRead($projectId)) {
+            return $denied;
         }
 
         if (!$this->projectExists($projectId)) {
@@ -198,7 +209,26 @@ final class WorkspaceExchangeController
     public function import(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $opts = $this->parseOptionsFromRequest($request);
+        $targetProjectId = (int) ($opts['target_project_id'] ?? 0);
+        $targetSuiteIdEarly = (int) ($opts['target_suite_id'] ?? 0);
         $createMissing = !empty($opts['create_missing_entities']);
+        if ($createMissing) {
+            if ($denied = $this->authorizeWorkspaceAdmin()) {
+                return $denied;
+            }
+        } elseif ($targetSuiteIdEarly > 0) {
+            if ($denied = $this->authorizeSuiteWrite($targetSuiteIdEarly)) {
+                return $denied;
+            }
+        } elseif ($targetProjectId > 0) {
+            if ($denied = $this->authorizeProjectWrite($targetProjectId)) {
+                return $denied;
+            }
+        } else {
+            if ($denied = $this->authorizeWorkspaceAdmin()) {
+                return $denied;
+            }
+        }
         $onDuplicate = strtolower(trim((string) ($opts['on_duplicate'] ?? 'allow')));
         if (!in_array($onDuplicate, ['skip', 'error', 'allow'], true)) {
             $onDuplicate = 'allow';

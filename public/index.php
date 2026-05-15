@@ -12,7 +12,10 @@ use App\Controllers\SuiteController;
 use App\Controllers\WorkspaceExchangeController;
 use App\Database;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
 use App\Services\LocalUserBootstrap;
+use App\Services\ProjectScopeResolver;
+use App\Controllers\ProjectMemberController;
 use App\Middleware\CorsMiddleware;
 use App\Middleware\RequireAuthMiddleware;
 use App\Middleware\SessionMiddleware;
@@ -75,19 +78,24 @@ $app->add(new RequireAuthMiddleware($authSettings));
 $app->add(new SessionMiddleware($root));
 $app->add(new CorsMiddleware($corsOrigin));
 
-$auth = new AuthController($pdo, $authSettings);
+$projectScope = new ProjectScopeResolver($pdo);
+$authorization = new AuthorizationService($pdo, $authSettings);
+
+$auth = new AuthController($pdo, $authSettings, $authorization);
 $app->get('/api/auth/session', [$auth, 'session']);
 $app->post('/api/auth/login/local', [$auth, 'loginLocal']);
 $app->get('/api/auth/login/{provider}', [$auth, 'login']);
 $app->get('/api/auth/callback/{provider}', [$auth, 'callback']);
+$app->patch('/api/auth/preferences', [$auth, 'patchPreferences']);
 $app->post('/api/auth/logout', [$auth, 'logout']);
 
-$projects = new ProjectController($pdo);
-$suites = new SuiteController($pdo);
-$sections = new SectionController($pdo);
-$cases = new CaseController($pdo);
-$workspace = new WorkspaceExchangeController($pdo);
-$runs = new RunController($pdo);
+$projects = new ProjectController($pdo, $authorization, $projectScope);
+$projectMembers = new ProjectMemberController($pdo, $authorization, $projectScope);
+$suites = new SuiteController($pdo, $authorization, $projectScope);
+$sections = new SectionController($pdo, $authorization, $projectScope);
+$cases = new CaseController($pdo, $authorization, $projectScope);
+$workspace = new WorkspaceExchangeController($pdo, $authorization, $projectScope);
+$runs = new RunController($pdo, $authorization, $projectScope);
 
 $app->get('/api/health', function ($request, $response) {
     return JsonResponse::encode($response, ['ok' => true]);
@@ -97,6 +105,9 @@ $app->get('/api/projects', [$projects, 'list']);
 $app->post('/api/projects', [$projects, 'create']);
 $app->patch('/api/projects/{projectId}', [$projects, 'update']);
 $app->delete('/api/projects/{projectId}', [$projects, 'delete']);
+$app->get('/api/projects/{projectId}/members', [$projectMembers, 'list']);
+$app->put('/api/projects/{projectId}/members', [$projectMembers, 'upsert']);
+$app->delete('/api/projects/{projectId}/members/{userId}', [$projectMembers, 'remove']);
 $app->get('/api/projects/{projectId}/export', [$workspace, 'exportByProjectId']);
 
 $app->get('/api/workspace/export', [$workspace, 'export']);

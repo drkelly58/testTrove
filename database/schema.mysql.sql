@@ -6,11 +6,12 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255) NOT NULL,
-  role VARCHAR(32) NOT NULL DEFAULT 'member',
+  role VARCHAR(32) NOT NULL DEFAULT 'user',
+  preferences TEXT NOT NULL DEFAULT ('{}'),
   created_at DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY users_email_unique (email),
-  CONSTRAINT users_role_chk CHECK (role IN ('admin', 'member', 'viewer'))
+  CONSTRAINT users_role_chk CHECK (role IN ('admin', 'user'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -19,6 +20,18 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT,
   created_at DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(32) NOT NULL,
+  created_at DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (project_id, user_id),
+  KEY idx_project_members_user (user_id),
+  CONSTRAINT fk_project_members_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  CONSTRAINT fk_project_members_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT project_members_role_chk CHECK (role IN ('member', 'tester', 'viewer'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS test_suites (

@@ -2,6 +2,10 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import { loadAuthSession } from './authSession';
 import { router } from './router';
+import { bootstrapThemeFromStorage } from './theme';
+import './styles/theme.css';
+
+bootstrapThemeFromStorage();
 
 router.beforeEach(async (to) => {
   const s = await loadAuthSession();

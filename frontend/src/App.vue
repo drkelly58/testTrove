@@ -3,7 +3,10 @@ import { onMounted, provide, ref } from 'vue';
 import { RouterLink, RouterView, useRouter } from 'vue-router';
 import { apiFetch, createProject } from '@/api';
 import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import EntityFormDialog from '@/components/EntityFormDialog.vue';
+import type { FieldDef } from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
+import PreferencesDialog from '@/components/PreferencesDialog.vue';
 import {
   PROJECT_CONTEXT_KEY,
   projectContextForProvide,
@@ -18,13 +21,25 @@ import {
 const projectCtx = projectContextForProvide();
 provide(PROJECT_CONTEXT_KEY, projectCtx);
 
-const newProjectName = ref('');
+const newProjectOpen = ref(false);
 const newProjectBusy = ref(false);
 const newProjectError = ref<string | null>(null);
+
+const newProjectFields: FieldDef[] = [
+  {
+    key: 'name',
+    label: 'Project name',
+    kind: 'text',
+    placeholder: 'e.g. Mobile app QA',
+    required: true,
+    autofocus: true,
+  },
+];
 
 const router = useRouter();
 const authSession = ref<AuthSessionPayload | null>(null);
 const logoutBusy = ref(false);
+const preferencesOpen = ref(false);
 
 onMounted(() => {
   void (async () => {
@@ -67,8 +82,13 @@ function onProjectSelect(ev: Event) {
   }
 }
 
-async function submitNewProject() {
-  const name = newProjectName.value.trim();
+function openNewProjectDialog() {
+  newProjectError.value = null;
+  newProjectOpen.value = true;
+}
+
+async function submitNewProject(values: Record<string, string | number | boolean | null>) {
+  const name = String(values.name ?? '').trim();
   if (!name || newProjectBusy.value) {
     return;
   }
@@ -76,7 +96,7 @@ async function submitNewProject() {
   newProjectError.value = null;
   try {
     const { id } = await createProject(name);
-    newProjectName.value = '';
+    newProjectOpen.value = false;
     await refreshProjects();
     setProjectId(id);
   } catch (e) {
@@ -176,21 +196,17 @@ async function submitNewProject() {
             <option v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
           </select>
         </label>
-        <form class="project-new" @submit.prevent="submitNewProject">
-          <input
-            v-model="newProjectName"
-            class="project-new-input"
-            type="text"
-            placeholder="New project…"
-            :disabled="newProjectBusy"
-            aria-label="New project name"
-          />
-          <IconButton type="submit" accent label="Create project" title="Create project" :disabled="newProjectBusy || !newProjectName.trim()">
-            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-          </IconButton>
-        </form>
+        <IconButton
+          type="button"
+          accent
+          label="New project"
+          title="New project"
+          :disabled="newProjectBusy"
+          @click="openNewProjectDialog"
+        >
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+        </IconButton>
         <p v-if="projectsError" class="project-bar-err">{{ projectsError }}</p>
-        <p v-else-if="newProjectError" class="project-bar-err">{{ newProjectError }}</p>
       </div>
 
       <nav class="nav">
@@ -215,11 +231,12 @@ async function submitNewProject() {
         >
           Sign out
         </button>
-        <RouterLink
-          to="/settings"
+        <button
+          type="button"
           class="nav-link nav-gear"
-          aria-label="Data and settings"
-          title="Data and settings"
+          aria-label="Preferences"
+          title="Preferences"
+          @click="preferencesOpen = true"
         >
           <svg class="gear-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path
@@ -227,9 +244,20 @@ async function submitNewProject() {
               d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.6-.22l-2.39.96c-.52-.4-1.08-.73-1.69-.98l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.61.25-1.17.59-1.69.98l-2.39-.96c-.22-.08-.47 0-.6.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.6.22l2.39-.96c.52.4 1.08.73 1.69.98l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.61-.25 1.17-.59 1.69-.98l2.39.96c.22.08.47 0 .6-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
             />
           </svg>
-        </RouterLink>
+        </button>
       </nav>
     </header>
+    <PreferencesDialog v-model="preferencesOpen" />
+    <EntityFormDialog
+      v-model="newProjectOpen"
+      title="New project"
+      :fields="newProjectFields"
+      submit-label="Create"
+      :busy="newProjectBusy"
+      :error-message="newProjectError"
+      @submit="submitNewProject"
+      @cancel="newProjectError = null"
+    />
     <main class="main">
       <RouterView />
     </main>
@@ -237,30 +265,6 @@ async function submitNewProject() {
 </template>
 
 <style>
-:root {
-  color-scheme: dark;
-  /* Brand — Trusted Repository */
-  --primary-navy: #1a2b3c;
-  --action-purple: #7b61ff;
-  --action-purple-soft: #9b85ff;
-  --success-mint: #00d1a0;
-  --neutral-slate: #64748b;
-  /* Mapped tokens */
-  --bg: #0c1218;
-  --panel: #111c26;
-  --panel-2: #152535;
-  --border: #243548;
-  --text: #f1f5f9;
-  --muted: #64748b;
-  --accent: #7b61ff;
-  --accent-2: #9b85ff;
-  --success: #00d1a0;
-  --danger: #f87171;
-  --radius: 12px;
-  --font: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-display: 'Outfit', var(--font);
-}
-
 *,
 *::before,
 *::after {
@@ -271,10 +275,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font);
-  background:
-    radial-gradient(900px 520px at 88% -8%, color-mix(in srgb, var(--action-purple) 22%, transparent) 0%, transparent 55%),
-    radial-gradient(700px 480px at 8% 0%, color-mix(in srgb, var(--success-mint) 12%, transparent) 0%, transparent 50%),
-    linear-gradient(180deg, #0a1016 0%, var(--bg) 38%);
+  background: var(--body-bg);
   color: var(--text);
 }
 
@@ -342,28 +343,6 @@ a {
 .project-select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-.project-new {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.project-new-input {
-  width: min(200px, 42vw);
-  min-width: 0;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text);
-  padding: 0.45rem 0.6rem;
-  font: inherit;
-  font-size: 0.85rem;
-}
-
-.project-new-input:disabled {
-  opacity: 0.55;
 }
 
 .project-bar-err {
@@ -464,9 +443,13 @@ a {
   justify-content: center;
   padding: 0.4rem 0.55rem;
   color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
 }
 
-.nav-gear.router-link-active {
+.nav-gear:hover {
   color: var(--text);
 }
 

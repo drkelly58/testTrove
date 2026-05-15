@@ -16,6 +16,7 @@ export type Project = {
   name: string;
   description: string | null;
   created_at: string;
+  my_role?: 'member' | 'tester' | 'viewer';
 };
 
 export type Suite = {

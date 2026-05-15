@@ -7,7 +7,9 @@ namespace App\Controllers;
 use App\Database;
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
 use App\Services\CaseExchangeService;
+use App\Services\ProjectScopeResolver;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -18,6 +20,7 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class RunController
 {
+    use AuthorizesApiAccess;
     private const RESULTS = ['untested', 'pass', 'fail', 'blocked', 'skipped'];
 
     /** Impact of a failure (or unclear); extend here and in DB CHECK / schema when adding values. */
@@ -29,14 +32,21 @@ final class RunController
 
     private const MAX_RUN_ITEM_URL_CHARS = 2048;
 
-    public function __construct(private readonly PDO $pdo)
-    {
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     /** GET /api/projects/{projectId}/runs */
     public function listByProject(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $projectId = (int) ($args['projectId'] ?? 0);
+        if ($denied = $this->authorizeRunRead($projectId)) {
+            return $denied;
+        }
         if (!$this->projectExists($projectId)) {
             return JsonResponse::error('project not found', 404);
         }
@@ -86,6 +96,9 @@ final class RunController
         }
 
         $projectId = (int) $suite['project_id'];
+        if ($denied = $this->authorizeRunExecute($projectId)) {
+            return $denied;
+        }
         $suiteName = (string) $suite['name'];
 
         $customName = null;
@@ -184,6 +197,9 @@ final class RunController
 
         $suiteId = (int) $section['suite_id'];
         $projectId = (int) $section['project_id'];
+        if ($denied = $this->authorizeRunExecute($projectId)) {
+            return $denied;
+        }
         $suiteName = (string) $section['suite_name'];
         $sectionName = (string) $section['section_name'];
 
@@ -276,6 +292,9 @@ final class RunController
     public function get(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $runId = (int) ($args['runId'] ?? 0);
+        if ($denied = $this->authorizeRunReadById($runId)) {
+            return $denied;
+        }
         $run = $this->fetchRunRow($runId);
         if ($run === null) {
             return JsonResponse::error('run not found', 404);
@@ -329,6 +348,9 @@ final class RunController
     public function update(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $runId = (int) ($args['runId'] ?? 0);
+        if ($denied = $this->authorizeRunExecuteById($runId)) {
+            return $denied;
+        }
         if ($runId <= 0) {
             return JsonResponse::error('Invalid run id', 422);
         }
@@ -387,6 +409,9 @@ final class RunController
     {
         $runId = (int) ($args['runId'] ?? 0);
         $itemId = (int) ($args['itemId'] ?? 0);
+        if ($denied = $this->authorizeRunExecuteById($runId)) {
+            return $denied;
+        }
 
         if ($this->fetchRunRow($runId) === null) {
             return JsonResponse::error('run not found', 404);
@@ -505,6 +530,9 @@ final class RunController
     public function delete(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $runId = (int) ($args['runId'] ?? 0);
+        if ($denied = $this->authorizeRunManageById($runId)) {
+            return $denied;
+        }
         if ($runId <= 0) {
             return JsonResponse::error('Invalid run id', 422);
         }

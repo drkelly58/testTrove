@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Auth\OAuthProfile;
+use App\UserPreferences;
 use PDO;
 use PDOException;
 
@@ -61,7 +62,7 @@ final class OAuthUserProvisioner
             );
         }
 
-        $role = 'member';
+        $role = 'user';
         if ($bootstrapAdminEmail !== null && $bootstrapAdminEmail !== '' && $emailNorm === $bootstrapAdminEmail) {
             $role = 'admin';
         }
@@ -112,44 +113,61 @@ final class OAuthUserProvisioner
     }
 
     /**
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null}
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
      */
     private function rowById(int $id): array
     {
-        $st = $this->pdo->prepare('SELECT id, email, display_name, role, picture_url FROM users WHERE id = :id');
-        $st->execute(['id' => $id]);
-        $r = $st->fetch(PDO::FETCH_ASSOC);
-        if ($r === false) {
-            throw new \RuntimeException('User row missing after OAuth upsert.');
-        }
-
-        return [
-            'id' => (int) $r['id'],
-            'email' => (string) $r['email'],
-            'display_name' => (string) $r['display_name'],
-            'role' => (string) $r['role'],
-            'picture_url' => $r['picture_url'] !== null && $r['picture_url'] !== '' ? (string) $r['picture_url'] : null,
-        ];
+        return $this->publicUserFromId($id);
     }
 
     /**
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null}|null
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}|null
      */
     public function findById(int $id): ?array
     {
-        $st = $this->pdo->prepare('SELECT id, email, display_name, role, picture_url FROM users WHERE id = :id');
+        $st = $this->pdo->prepare(
+            'SELECT id, email, display_name, role, picture_url, preferences FROM users WHERE id = :id'
+        );
         $st->execute(['id' => $id]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
         if ($r === false) {
             return null;
         }
 
+        return $this->publicUserFromRow($r);
+    }
+
+    /**
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
+     */
+    private function publicUserFromId(int $id): array
+    {
+        $st = $this->pdo->prepare(
+            'SELECT id, email, display_name, role, picture_url, preferences FROM users WHERE id = :id'
+        );
+        $st->execute(['id' => $id]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if ($r === false) {
+            throw new \RuntimeException('User row missing after OAuth upsert.');
+        }
+
+        return $this->publicUserFromRow($r);
+    }
+
+    /**
+     * @param array<string, mixed> $r
+     *
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
+     */
+    private function publicUserFromRow(array $r): array
+    {
         return [
             'id' => (int) $r['id'],
             'email' => (string) $r['email'],
             'display_name' => (string) $r['display_name'],
             'role' => (string) $r['role'],
             'picture_url' => $r['picture_url'] !== null && $r['picture_url'] !== '' ? (string) $r['picture_url'] : null,
+            'preferences' => UserPreferences::decode(isset($r['preferences']) ? (string) $r['preferences'] : null),
         ];
     }
 }

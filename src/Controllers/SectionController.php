@@ -6,19 +6,30 @@ namespace App\Controllers;
 
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
+use App\Services\ProjectScopeResolver;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 final class SectionController
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    use AuthorizesApiAccess;
+
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     public function list(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteRead($suiteId)) {
+            return $denied;
+        }
         if (!$this->suiteExists($suiteId)) {
             return JsonResponse::error('suite not found', 404);
         }
@@ -35,6 +46,9 @@ final class SectionController
     public function create(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->suiteExists($suiteId)) {
             return JsonResponse::error('suite not found', 404);
         }
@@ -81,6 +95,9 @@ final class SectionController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $sectionId = (int) ($args['sectionId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->sectionInSuite($sectionId, $suiteId)) {
             return JsonResponse::error('section not found', 404);
         }
@@ -132,6 +149,9 @@ final class SectionController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $sectionId = (int) ($args['sectionId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         $section = $this->fetchSection($sectionId, $suiteId);
         if ($section === null) {
             return JsonResponse::error('section not found', 404);

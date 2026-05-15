@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { fetchRun, type RunDetail, type RunItemDetail, type RunItemSeverity, type TestStep } from '@/api';
-import { runOverviewSingleExpand, setRunOverviewSingleExpand } from '@/uiPreferences';
+import { runOverviewSingleExpand } from '@/uiPreferences';
 
 const route = useRoute();
 
@@ -100,15 +100,6 @@ function toggleExpand(id: number) {
     next.add(id);
   }
   expanded.value = next;
-}
-
-function onSingleExpandPrefChange(ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked;
-  setRunOverviewSingleExpand(checked);
-  if (checked && expanded.value.size > 1) {
-    const ids = [...expanded.value];
-    expanded.value = new Set([ids[ids.length - 1]!]);
-  }
 }
 
 function isExpanded(id: number): boolean {
@@ -238,17 +229,7 @@ function evidenceShots(item: RunItemDetail): string[] {
           </div>
         </section>
 
-        <div class="list-toolbar">
-          <h2 class="list-heading">Cases</h2>
-          <label class="pref-toggle" title="Remembered in this browser">
-            <input
-              type="checkbox"
-              :checked="runOverviewSingleExpand"
-              @change="onSingleExpandPrefChange"
-            />
-            <span>Only one case open at a time</span>
-          </label>
-        </div>
+        <h2 class="list-heading">Cases</h2>
         <div class="items-scroll">
           <template v-for="group in sectionGroups" :key="group.name + '-' + (group.items[0]?.id ?? '')">
             <h3 class="section-heading">{{ group.name }}</h3>
@@ -477,41 +458,13 @@ function evidenceShots(item: RunItemDetail): string[] {
   color: var(--muted);
 }
 
-.list-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
-  margin-bottom: 0.5rem;
-}
-
 .list-heading {
-  margin: 0;
+  margin: 0 0 0.5rem;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.pref-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.pref-toggle input {
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.pref-toggle:hover {
-  color: var(--text);
 }
 
 .items-scroll {

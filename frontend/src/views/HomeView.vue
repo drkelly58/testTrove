@@ -35,11 +35,21 @@ import {
   type Suite,
   type TestCase,
 } from '@/api';
+import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
+import { canExecuteRuns, canWriteCatalog } from '@/permissions';
 import { stepsAsArray } from '@/stepsModel';
 
 const router = useRouter();
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
+
+const authSession = ref<AuthSessionPayload | null>(null);
+void loadAuthSession().then((s) => {
+  authSession.value = s;
+});
+
+const canWrite = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
+const canRun = computed(() => canExecuteRuns(authSession.value, projectCtx.projectId));
 
 function caseSteps(c: TestCase) {
   return stepsAsArray(c.steps);
@@ -983,7 +993,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
         <p class="hint">Suites and sections for the project selected in the top bar. Pick a section to view its cases.</p>
       </div>
 
-      <div v-if="selectedProject" class="project-explorer-actions" aria-label="Project actions">
+      <div v-if="selectedProject && canWrite" class="project-explorer-actions" aria-label="Project actions">
         <IconButton label="Edit project" title="Edit project" @click="startEditProject(selectedProject)">
           <svg viewBox="0 0 24 24">
             <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
@@ -1027,6 +1037,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
               </span>
             </button>
             <IconButton
+              v-if="canRun"
               accent
               label="Start test run for this suite"
               title="Start test run (full suite)"
@@ -1042,12 +1053,13 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                 />
               </svg>
             </IconButton>
-            <IconButton label="Edit suite" title="Edit suite" @click.stop="startEditSuite(s)">
+            <IconButton v-if="canWrite" label="Edit suite" title="Edit suite" @click.stop="startEditSuite(s)">
               <svg viewBox="0 0 24 24">
                 <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
               </svg>
             </IconButton>
             <IconButton
+              v-if="canWrite"
               label="Duplicate suite with all cases"
               title="Duplicate suite (copy all cases)"
               @click.stop="duplicateSuiteClick(s)"
@@ -1058,6 +1070,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
               </svg>
             </IconButton>
             <IconButton
+              v-if="canWrite"
               danger
               label="Delete suite (cascades to all cases)"
               title="Delete suite (cascades to all cases)"
@@ -1087,6 +1100,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                   </span>
                 </button>
                 <IconButton
+                  v-if="canRun"
                   accent
                   label="Start test run for this section"
                   title="Start test run (this section only)"
@@ -1102,12 +1116,12 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                     />
                   </svg>
                 </IconButton>
-                <IconButton label="Edit section" title="Edit section" @click.stop="startEditSection(group.section)">
+                <IconButton v-if="canWrite" label="Edit section" title="Edit section" @click.stop="startEditSection(group.section)">
                   <svg viewBox="0 0 24 24">
                     <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
                   </svg>
                 </IconButton>
-                <IconButton danger label="Delete section" title="Delete section" @click.stop="askDeleteSection(group.section)">
+                <IconButton v-if="canWrite" danger label="Delete section" title="Delete section" @click.stop="askDeleteSection(group.section)">
                   <svg viewBox="0 0 24 24">
                     <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H9a2 2 0 01-2-2V6h12zM10 11v6M14 11v6" fill="none" />
                   </svg>
@@ -1118,7 +1132,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
         </li>
       </ul>
 
-      <form class="inline form-with-icon tree-add-suite" @submit.prevent="addSuite">
+      <form v-if="canWrite" class="inline form-with-icon tree-add-suite" @submit.prevent="addSuite">
         <input v-model="newSuiteName" class="input" type="text" placeholder="New suite in project" :disabled="!selectedProject" />
         <IconButton
           type="submit"
@@ -1130,7 +1144,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
         </IconButton>
       </form>
-      <form class="inline form-with-icon tree-add-section" @submit.prevent="addSection">
+      <form v-if="canWrite" class="inline form-with-icon tree-add-section" @submit.prevent="addSection">
         <input v-model="newSectionName" class="input" type="text" placeholder="New section" :disabled="!selectedSuite" />
         <input
           v-model="newSectionPrecondition"
@@ -1154,7 +1168,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
         <p class="hint" v-else-if="projectCtx.projectId !== null">Select a suite in the tree to view cases.</p>
         <p class="hint" v-else>Select a project in the top bar to view cases.</p>
       </div>
-      <form class="inline form-with-icon" @submit.prevent="addCase">
+      <form v-if="canWrite" class="inline form-with-icon" @submit.prevent="addCase">
         <input v-model="newCaseTitle" class="input" type="text" placeholder="New test case title" :disabled="!selectedSuite" />
         <IconButton
           type="submit"
@@ -1180,7 +1194,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
 
       <div v-else>
         <div
-          v-if="bulkSelectedCount > 0"
+          v-if="canWrite && bulkSelectedCount > 0"
           class="bulk-status-bar"
           role="region"
           aria-label="Bulk status for selected cases"
@@ -1204,7 +1218,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
             <div v-else class="section-head-placeholder">
               <span class="muted sm">Cases in this section</span>
             </div>
-            <div class="section-head-actions">
+            <div v-if="canWrite" class="section-head-actions">
               <div class="section-bulk" role="group" aria-label="Section bulk status">
                 <span class="bulk-hint">All cases →</span>
                 <button type="button" class="btn sm" @click="askSectionBulkStatus(activeExplorerSectionGroup.section, 'draft')">
@@ -1232,6 +1246,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
           <header class="case-head">
             <div class="case-title-row">
               <input
+                v-if="canWrite"
                 class="bulk-case-check"
                 type="checkbox"
                 :checked="bulkIsSelected(c.id)"
@@ -1245,7 +1260,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                 <span class="chip">{{ c.priority }}</span>
                 <span class="chip chip-status" :class="'chip-status--' + c.status">{{ c.status }}</span>
               </div>
-              <div class="case-actions">
+              <div v-if="canWrite" class="case-actions">
                 <select
                   class="input sm case-move select-subtle"
                   aria-label="Move case to another suite"
@@ -1287,7 +1302,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                     </li>
                   </ul>
                 </div>
-                <div class="step-move">
+                <div v-if="canWrite" class="step-move">
                   <select
                     v-model="stepMoveTarget[`${c.id}-${i}`]"
                     class="input sm select-subtle"

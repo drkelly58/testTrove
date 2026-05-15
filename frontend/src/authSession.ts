@@ -1,3 +1,6 @@
+import { clearUserPreferencesState, syncPreferencesFromAuthUser } from '@/userPreferences';
+import type { UserPreferences } from '@/userPreferences';
+
 const base = '';
 
 export type AuthUser = {
@@ -6,13 +9,18 @@ export type AuthUser = {
   display_name: string;
   role: string;
   picture_url: string | null;
+  preferences?: UserPreferences;
 };
+
+export type ProjectRole = 'member' | 'tester' | 'viewer';
 
 export type AuthSessionPayload = {
   auth_required: boolean;
   local_login_enabled: boolean;
   providers: { id: string; label: string }[];
   user: AuthUser | null;
+  is_admin?: boolean;
+  project_roles?: Record<number, ProjectRole>;
 };
 
 let cached: AuthSessionPayload | null = null;
@@ -30,12 +38,20 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
   cached = {
     ...j.data,
     local_login_enabled: j.data.local_login_enabled ?? false,
+    is_admin: j.data.is_admin ?? false,
+    project_roles: j.data.project_roles ?? {},
   };
+  if (cached.user) {
+    syncPreferencesFromAuthUser(cached.user);
+  } else {
+    clearUserPreferencesState();
+  }
   return cached;
 }
 
 export function clearAuthSessionCache(): void {
   cached = null;
+  clearUserPreferencesState();
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthUser> {
@@ -62,5 +78,7 @@ export async function loginWithPassword(email: string, password: string): Promis
     throw new Error('Sign-in response missing user');
   }
   clearAuthSessionCache();
-  return body.data.user;
+  const user = body.data.user;
+  syncPreferencesFromAuthUser(user);
+  return user;
 }

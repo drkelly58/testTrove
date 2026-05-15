@@ -1,5 +1,5 @@
 RewriteEngine On
-DirectoryIndex index.php
+DirectoryIndex index.html index.php
 
 # Do not cache JSON API responses (avoids stale GET /api/* behind CDNs and aggressive proxies).
 # Requires mod_headers (enabled on most Apache shared hosts; harmless no-op if absent).

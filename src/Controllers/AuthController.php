@@ -10,8 +10,11 @@ use App\Auth\OAuthProviderFactory;
 use App\Auth\OAuthResourceProfileMapper;
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
 use App\Services\LocalPasswordAuthenticator;
 use App\Services\OAuthUserProvisioner;
+use App\Services\UserPreferencesService;
+use App\UserPreferences;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -27,6 +30,7 @@ final class AuthController
     public function __construct(
         private readonly PDO $pdo,
         private readonly AuthSettings $settings,
+        private readonly AuthorizationService $authorization,
     ) {
         $this->providerFactory = new OAuthProviderFactory($_ENV);
         $this->profileMapper = new OAuthResourceProfileMapper();
@@ -36,8 +40,15 @@ final class AuthController
     public function session(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $user = null;
+        $projectRoles = [];
+        $isAdmin = false;
         if (!empty($_SESSION['user_id']) && is_numeric((string) $_SESSION['user_id'])) {
-            $user = $this->users->findById((int) $_SESSION['user_id']);
+            $userId = (int) $_SESSION['user_id'];
+            $user = $this->users->findById($userId);
+            if ($user !== null && $this->settings->isAuthRequired()) {
+                $isAdmin = $this->authorization->isGlobalAdmin($userId);
+                $projectRoles = $this->authorization->projectRolesForUser($userId);
+            }
         }
 
         return JsonResponse::encode($response, [
@@ -46,6 +57,8 @@ final class AuthController
                 'local_login_enabled' => $this->settings->isLocalAuthEnabled(),
                 'providers' => $this->settings->listProviders(),
                 'user' => $user,
+                'is_admin' => $isAdmin,
+                'project_roles' => $projectRoles,
             ],
         ]);
     }
@@ -78,6 +91,33 @@ final class AuthController
         session_regenerate_id(true);
 
         return JsonResponse::encode($response, ['data' => ['user' => $user]]);
+    }
+
+    public function patchPreferences(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        if (empty($_SESSION['user_id']) || !is_numeric((string) $_SESSION['user_id'])) {
+            return JsonResponse::error('Authentication required', 401);
+        }
+
+        try {
+            $data = JsonRequestBody::decodeAssoc($request);
+        } catch (\JsonException $e) {
+            return JsonResponse::error('Invalid JSON: ' . $e->getMessage(), 422);
+        }
+
+        if (!is_array($data)) {
+            return JsonResponse::error('Invalid JSON body', 422);
+        }
+
+        $patch = UserPreferences::filter($data);
+        if ($patch === []) {
+            return JsonResponse::error('No supported preference keys in body', 422);
+        }
+
+        $prefs = new UserPreferencesService($this->pdo);
+        $merged = $prefs->patch((int) $_SESSION['user_id'], $patch);
+
+        return JsonResponse::encode($response, ['data' => ['preferences' => $merged]]);
     }
 
     public function login(

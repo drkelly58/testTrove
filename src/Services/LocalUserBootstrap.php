@@ -31,7 +31,7 @@ final class LocalUserBootstrap
         }
 
         $adminEmail = $settings->bootstrapAdminEmail();
-        $role = $adminEmail !== '' && $email === $adminEmail ? 'admin' : 'member';
+        $role = $adminEmail !== '' && $email === $adminEmail ? 'admin' : 'user';
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $displayName = $settings->localBootstrapDisplayName();
 

@@ -9,7 +9,9 @@ import {
   workspaceImport,
   type Suite,
 } from '@/api';
+import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
+import { canManageWorkspace, canWriteCatalog } from '@/permissions';
 
 const CSV_FIELDS: { key: string; label: string }[] = [
   { key: 'project_name', label: 'Project name' },
@@ -26,6 +28,13 @@ const CSV_FIELDS: { key: string; label: string }[] = [
 ];
 
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
+
+const authSession = ref<AuthSessionPayload | null>(null);
+void loadAuthSession().then((s) => {
+  authSession.value = s;
+});
+const canWorkspaceAdmin = computed(() => canManageWorkspace(authSession.value));
+const canImportToProject = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
 
 const projects = computed(() => projectCtx.projects);
 const loading = computed(() => projectCtx.loading);
@@ -257,29 +266,27 @@ async function runExportFullProject() {
     error.value = e instanceof Error ? e.message : 'Export failed';
   }
 }
-
 </script>
 
 <template>
-  <div class="settings">
-    <header class="page-head">
-      <h1>Data and settings</h1>
-      <p class="lede">Export selected suites or import files. Workspace JSON (v2) can recreate projects and suites when enabled.</p>
-    </header>
+  <div class="data-io">
+    <p class="data-io-lede">
+      Export selected suites or import files. Workspace JSON (v2) can recreate projects and suites when enabled.
+      Uses the project selected in the <strong>top bar</strong>.
+    </p>
 
     <div v-if="loading" class="banner muted">Loading…</div>
     <div v-if="message" class="banner ok">{{ message }}</div>
     <div v-if="error" class="banner err">{{ error }}</div>
 
-    <section class="card">
-      <h2>Export</h2>
+    <section class="block">
+      <h3 class="block-title">Export</h3>
       <p class="hint">
         <strong>Selected suites</strong> uses the checkboxes below (workspace JSON v2 or multi-suite CSV).
-        <strong>Full project</strong> downloads every suite in the project in one file (same formats), without using the selection.
-        Export uses the project selected in the <strong>top bar</strong>.
+        <strong>Full project</strong> downloads every suite in one file, without using the selection.
       </p>
 
-      <div class="field">
+      <label class="field">
         <span class="lab">Suites to include</span>
         <label class="check-line">
           <input v-model="allSuitesSelected" type="checkbox" />
@@ -297,7 +304,7 @@ async function runExportFullProject() {
             </label>
           </li>
         </ul>
-      </div>
+      </label>
 
       <label class="field">
         <span class="lab">Format</span>
@@ -317,19 +324,16 @@ async function runExportFullProject() {
       </div>
     </section>
 
-    <section class="card">
-      <h2>Import</h2>
+    <section v-if="canImportToProject || canWorkspaceAdmin" class="block">
+      <h3 class="block-title">Import</h3>
       <p class="hint">
         <strong>JSON</strong>: workspace v2 carries project and suite names; flat lists need a target suite.
-        <strong>CSV</strong>: choosing a <code>.csv</code> file opens a short review step (column mapping and import mode). Project-style rows include suite and section names (and optionally project names), or pick a target project so only suite names are required.
-        The suite list matches the <strong>top bar</strong> project (same as Export).
+        <strong>CSV</strong>: choosing a <code>.csv</code> file opens a review step (column mapping and import mode).
       </p>
       <p class="hint">
         The <strong>steps</strong> cell is plain text, one numbered step per line. Put the expected result on the next line as
-        <code>Expected: …</code> (or <code>Result: …</code>). You can still use a single-line shortcut <code>action -&gt; expected</code> or
-        <code>action =&gt; expected</code>. Lines starting with <code>*</code> attach a variant to the previous step (e.g.
-        <code>* [mobile] Login screen appears</code>).
-        You can also map a separate <strong>expected</strong> column; non-empty lines pair by position with the steps in that row.
+        <code>Expected: …</code> (or <code>Result: …</code>). Lines starting with <code>*</code> attach a variant to the previous step.
+        You can also map a separate <strong>expected</strong> column.
       </p>
 
       <label class="field">
@@ -348,9 +352,9 @@ async function runExportFullProject() {
         </select>
       </label>
 
-      <label class="check-line block">
+      <label v-if="canWorkspaceAdmin" class="check-line block">
         <input v-model="importCreateMissing" type="checkbox" />
-        <span>Create missing projects &amp; suites when the file defines them (workspace JSON v2 or project CSV)</span>
+        <span>Create missing projects &amp; suites when the file defines them</span>
       </label>
 
       <fieldset class="field dup-field">
@@ -379,7 +383,6 @@ async function runExportFullProject() {
         <p class="hint">
           Suggested import shape:
           <strong>{{ csvSuggestedMode === 'project' ? 'Project / multi-suite' : 'Flat (single suite)' }}</strong>.
-          Override with “Interpret as” if the guess is wrong.
         </p>
 
         <label class="field">
@@ -393,9 +396,7 @@ async function runExportFullProject() {
 
         <div class="column-map">
           <span class="lab">Column mapping</span>
-          <p class="hint tight">
-            Use <strong>Auto</strong> to match typical header names. Pick a column when your file uses custom labels.
-          </p>
+          <p class="hint tight">Use <strong>Auto</strong> to match typical header names, or pick a column for custom labels.</p>
           <div v-for="row in CSV_FIELDS" :key="row.key" class="map-row">
             <span class="map-label">{{ row.label }}</span>
             <select v-model="csvColumnMapDraft[row.key]" class="input input-sm">
@@ -424,20 +425,10 @@ async function runExportFullProject() {
 </template>
 
 <style scoped>
-.settings {
-  max-width: 640px;
-}
-
-.page-head h1 {
-  margin: 0 0 0.35rem;
-  font-size: 1.35rem;
-  font-family: var(--font-display, 'Outfit', sans-serif);
-}
-
-.lede {
-  margin: 0 0 1.25rem;
+.data-io-lede {
+  margin: 0 0 1rem;
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   line-height: 1.45;
 }
 
@@ -465,23 +456,28 @@ async function runExportFullProject() {
   color: var(--danger);
 }
 
-.card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 12px);
-  padding: 1.1rem 1.2rem;
-  margin-bottom: 1rem;
+.block {
+  padding: 0 0 1.25rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
-.card h2 {
+.block:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.block-title {
   margin: 0 0 0.35rem;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
+  font-weight: 700;
 }
 
 .hint {
-  margin: 0 0 1rem;
+  margin: 0 0 0.85rem;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   line-height: 1.45;
 }
 
@@ -505,13 +501,14 @@ async function runExportFullProject() {
   color: var(--text);
   padding: 0.5rem 0.65rem;
   font: inherit;
+  font-size: 0.88rem;
 }
 
 .suite-picks {
   list-style: none;
   margin: 0.25rem 0 0;
   padding: 0;
-  max-height: 10rem;
+  max-height: 8rem;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -531,7 +528,7 @@ async function runExportFullProject() {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   cursor: pointer;
 }
 
@@ -550,7 +547,7 @@ async function runExportFullProject() {
   align-items: flex-start;
   gap: 0.45rem;
   margin-bottom: 0.35rem;
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   cursor: pointer;
 }
 
@@ -559,8 +556,9 @@ async function runExportFullProject() {
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);
-  padding: 0.55rem 0.9rem;
+  padding: 0.5rem 0.85rem;
   font: inherit;
+  font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -583,7 +581,6 @@ async function runExportFullProject() {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.35rem;
 }
 
 .hint.tight {
@@ -619,7 +616,7 @@ async function runExportFullProject() {
 }
 
 .map-label {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 

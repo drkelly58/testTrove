@@ -7,7 +7,9 @@ namespace App\Controllers;
 use App\IO\XlsxImportExportStub;
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Services\AuthorizationService;
 use App\Services\CaseExchangeService;
+use App\Services\ProjectScopeResolver;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -16,13 +18,22 @@ use Slim\Psr7\Response;
 
 final class CaseController
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    use AuthorizesApiAccess;
+
+    public function __construct(
+        private readonly PDO $pdo,
+        AuthorizationService $authorization,
+        ProjectScopeResolver $projectScope,
+    ) {
+        $this->initAuthorization($authorization, $projectScope);
     }
 
     public function list(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteRead($suiteId)) {
+            return $denied;
+        }
         $rows = $this->fetchCasesRows($suiteId);
         return JsonResponse::encode($response, ['data' => $rows]);
     }
@@ -30,6 +41,9 @@ final class CaseController
     public function create(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         try {
             $data = JsonRequestBody::decodeAssoc($request);
         } catch (\JsonException $e) {
@@ -82,6 +96,9 @@ final class CaseController
     public function export(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteRead($suiteId)) {
+            return $denied;
+        }
         if (!$this->suiteExists($suiteId)) {
             return JsonResponse::error('suite not found', 404);
         }
@@ -142,6 +159,9 @@ final class CaseController
     public function import(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->suiteExists($suiteId)) {
             return JsonResponse::error('suite not found', 404);
         }
@@ -307,6 +327,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->caseInSuite($caseId, $suiteId)) {
             return JsonResponse::error('case not found', 404);
         }
@@ -391,6 +414,9 @@ final class CaseController
     public function bulkSetStatus(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->suiteExists($suiteId)) {
             return JsonResponse::error('suite not found', 404);
         }
@@ -520,6 +546,9 @@ final class CaseController
     {
         $fromSuiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($fromSuiteId)) {
+            return $denied;
+        }
         if (!$this->caseInSuite($caseId, $fromSuiteId)) {
             return JsonResponse::error('case not found', 404);
         }
@@ -587,6 +616,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $fromCaseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->caseInSuite($fromCaseId, $suiteId)) {
             return JsonResponse::error('case not found', 404);
         }
@@ -686,6 +718,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteRead($suiteId)) {
+            return $denied;
+        }
         if (!$this->caseInSuite($caseId, $suiteId)) {
             return JsonResponse::error('case not found', 404);
         }
@@ -718,6 +753,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         $versionId = (int) ($args['versionId'] ?? 0);
         if (!$this->caseInSuite($caseId, $suiteId)) {
             return JsonResponse::error('case not found', 404);
@@ -806,6 +844,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if ($suiteId <= 0 || $caseId <= 0) {
             return JsonResponse::error('Invalid suite or case id', 422);
         }
@@ -901,6 +942,9 @@ final class CaseController
     {
         $suiteId = (int) ($args['suiteId'] ?? 0);
         $caseId = (int) ($args['caseId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
         if (!$this->caseInSuite($caseId, $suiteId)) {
             return JsonResponse::error('case not found', 404);
         }
