@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Auth\AuthSettings;
+use App\Auth\UserRole;
 use PDO;
 
 /**
@@ -24,14 +25,18 @@ final class LocalUserBootstrap
             return;
         }
 
-        $stmt = $pdo->prepare('SELECT id FROM users WHERE LOWER(TRIM(email)) = :e LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id, role FROM users WHERE LOWER(TRIM(email)) = :e LIMIT 1');
         $stmt->execute(['e' => $email]);
-        if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($existing !== false) {
+            if ((string) ($existing['role'] ?? '') !== UserRole::ADMIN) {
+                $upd = $pdo->prepare('UPDATE users SET role = :role WHERE id = :id');
+                $upd->execute(['role' => UserRole::ADMIN, 'id' => (int) $existing['id']]);
+            }
+
             return;
         }
 
-        $adminEmail = $settings->bootstrapAdminEmail();
-        $role = $adminEmail !== '' && $email === $adminEmail ? 'admin' : 'user';
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $displayName = $settings->localBootstrapDisplayName();
 
@@ -43,7 +48,7 @@ final class LocalUserBootstrap
             'email' => $email,
             'ph' => $hash,
             'dn' => $displayName,
-            'role' => $role,
+            'role' => UserRole::ADMIN,
         ]);
     }
 }
