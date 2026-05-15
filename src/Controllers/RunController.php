@@ -27,7 +27,7 @@ final class RunController
     /** Impact of a failure (or unclear); extend here and in DB CHECK / schema when adding values. */
     private const SEVERITIES = ['breaking', 'ui_only', 'unclear'];
 
-    private const RUN_STATES = ['open', 'locked', 'archived'];
+    private const RUN_STATES = ['open', 'complete', 'locked', 'archived'];
 
     private const MAX_SCREENSHOT_URLS = 20;
 
@@ -66,6 +66,7 @@ final class RunController
 
         $stmt = $this->pdo->prepare(
             'SELECT r.id, r.project_id, r.suite_id, r.section_id, r.name, r.run_kind, r.state, r.created_at,
+                    r.created_by_user_id,
                     r.assigned_to_user_id,
                     assignee.display_name AS assigned_to_display_name,
                     assignee.email AS assigned_to_email,
@@ -97,6 +98,7 @@ final class RunController
             if (!isset($row['section_name']) || $row['section_name'] === '') {
                 $row['section_name'] = null;
             }
+            $row['created_by_user_id'] = self::nullableIntColumn($row['created_by_user_id'] ?? null);
             $row['assigned_to_user_id'] = self::nullableIntColumn($row['assigned_to_user_id'] ?? null);
             $row['assigned_to_display_name'] = self::nullableStringColumn($row['assigned_to_display_name'] ?? null);
             $row['assigned_to_email'] = self::nullableStringColumn($row['assigned_to_email'] ?? null);
@@ -355,6 +357,11 @@ final class RunController
         if ($run === null) {
             return JsonResponse::error('run not found', 404);
         }
+        $this->syncRunAutoCompleteState($runId);
+        $run = $this->fetchRunRow($runId);
+        if ($run === null) {
+            return JsonResponse::error('run not found', 404);
+        }
 
         $itemsStmt = $this->pdo->prepare(
             'SELECT i.id, i.run_id, i.case_id, i.result, i.severity, i.notes, i.screenshots_json, i.video_url, i.executed_at,
@@ -579,6 +586,8 @@ final class RunController
 
         $shotsOut = self::normalizeScreenshotsList($screenshotsJson);
 
+        $runState = $this->syncRunAutoCompleteState($runId);
+
         return JsonResponse::encode($response, [
             'data' => [
                 'id' => $itemId,
@@ -589,8 +598,50 @@ final class RunController
                 'screenshots' => $shotsOut,
                 'video_url' => $videoUrl,
                 'executed_at' => $executedAt,
+                'run_state' => $runState,
             ],
         ]);
+    }
+
+    /**
+     * When every item is pass or fail, mark the run complete; reopen if a non-terminal result remains.
+     * Does not change locked or archived runs.
+     */
+    private function syncRunAutoCompleteState(int $runId): string
+    {
+        $st = $this->pdo->prepare('SELECT state FROM test_runs WHERE id = :id LIMIT 1');
+        $st->execute(['id' => $runId]);
+        $curState = $st->fetchColumn();
+        if ($curState === false) {
+            return 'open';
+        }
+        $curState = (string) $curState;
+        if (!in_array($curState, ['open', 'complete'], true)) {
+            return $curState;
+        }
+
+        $total = (int) $this->scalar(
+            'SELECT COUNT(*) FROM test_run_items WHERE run_id = :rid',
+            ['rid' => $runId]
+        );
+        $pending = (int) $this->scalar(
+            'SELECT COUNT(*) FROM test_run_items WHERE run_id = :rid AND result NOT IN (\'pass\', \'fail\')',
+            ['rid' => $runId]
+        );
+
+        $newState = $curState;
+        if ($total > 0 && $pending === 0) {
+            $newState = 'complete';
+        } elseif ($pending > 0 && $curState === 'complete') {
+            $newState = 'open';
+        }
+
+        if ($newState !== $curState) {
+            $upd = $this->pdo->prepare('UPDATE test_runs SET state = :state WHERE id = :id');
+            $upd->execute(['state' => $newState, 'id' => $runId]);
+        }
+
+        return $newState;
     }
 
     /**
@@ -726,6 +777,7 @@ final class RunController
     {
         $stmt = $this->pdo->prepare(
             'SELECT r.id, r.project_id, r.suite_id, r.section_id, r.name, r.run_kind, r.state, r.created_at,
+                    r.created_by_user_id,
                     r.assigned_to_user_id,
                     assignee.display_name AS assigned_to_display_name,
                     assignee.email AS assigned_to_email,
@@ -754,6 +806,7 @@ final class RunController
         if (!array_key_exists('suite_name', $row)) {
             $row['suite_name'] = null;
         }
+        $row['created_by_user_id'] = self::nullableIntColumn($row['created_by_user_id'] ?? null);
         $row['assigned_to_user_id'] = self::nullableIntColumn($row['assigned_to_user_id'] ?? null);
         $row['assigned_to_display_name'] = self::nullableStringColumn($row['assigned_to_display_name'] ?? null);
         $row['assigned_to_email'] = self::nullableStringColumn($row['assigned_to_email'] ?? null);
@@ -788,16 +841,29 @@ final class RunController
         if ($userId === null) {
             return null;
         }
+        $auth = $this->authorizationService();
+        if ($auth->isAuthEnforced()) {
+            $actorId = $auth->requireUserId();
+            if ($auth->isGlobalAdmin($actorId) && $userId === $actorId) {
+                return null;
+            }
+        }
         $st = $this->pdo->prepare(
             'SELECT role FROM project_members WHERE project_id = :pid AND user_id = :uid LIMIT 1'
         );
         $st->execute(['pid' => $projectId, 'uid' => $userId]);
         $role = $st->fetchColumn();
         if ($role === false) {
-            return JsonResponse::error('assignee must be a project member with the tester role', 422);
+            return JsonResponse::error(
+                'assignee must be a project member with the member or tester role',
+                422,
+            );
         }
-        if ((string) $role !== ProjectRole::TESTER) {
-            return JsonResponse::error('assignee must be a project member with the tester role', 422);
+        if ((string) $role !== ProjectRole::TESTER && (string) $role !== ProjectRole::MEMBER) {
+            return JsonResponse::error(
+                'assignee must be a project member with the member or tester role',
+                422,
+            );
         }
 
         return null;

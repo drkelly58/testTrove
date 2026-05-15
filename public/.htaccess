@@ -24,6 +24,7 @@ RewriteRule ^ index.php [QSA,L]
 
 # Site root -> SPA (after `npm run build` from /frontend; outDir ../public/app, base /app/)
 RewriteRule ^$ /app/ [R=302,L]
+RewriteRule ^index\.php$ /app/ [R=302,L]
 RewriteRule ^app$ /app/ [R=302,L]
 
 # SPA under /app/

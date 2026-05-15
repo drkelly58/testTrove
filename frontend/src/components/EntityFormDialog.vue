@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, useId, watch } from 'vue';
+import { computed, nextTick, ref, useId, watch } from 'vue';
 
 export type FieldKind = 'text' | 'textarea' | 'number' | 'select' | 'checkbox';
 export type SelectOption = { value: string | number; label: string };
@@ -35,6 +35,8 @@ const props = withDefaults(
     fields: FieldDef[];
     /** Submit button label, e.g. "Save" / "Create". Default "Save". */
     submitLabel?: string;
+    /** When set, overrides {@link submitLabel} from current field values (e.g. dynamic Start vs Assign). */
+    resolveSubmitLabel?: (values: Record<string, string | number | boolean | null>) => string;
     cancelLabel?: string;
     /** When true, both buttons are disabled (e.g. while a parent request is pending). */
     busy?: boolean;
@@ -61,6 +63,13 @@ const fieldErrors = ref<Record<string, string>>({});
 const inputRefs = ref<Record<string, HTMLElement | null>>({});
 
 const headingId = `entity-form-title-${useId()}`;
+
+const effectiveSubmitLabel = computed(() => {
+  if (props.resolveSubmitLabel) {
+    return props.resolveSubmitLabel(values.value);
+  }
+  return props.submitLabel;
+});
 
 function setFieldRef(key: string, el: unknown) {
   inputRefs.value[key] = (el as HTMLElement | null) ?? null;
@@ -323,7 +332,7 @@ function onSubmit() {
               {{ cancelLabel }}
             </button>
             <button type="submit" class="btn primary" :disabled="busy">
-              {{ submitLabel }}
+              {{ effectiveSubmitLabel }}
             </button>
           </footer>
         </form>

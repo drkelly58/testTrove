@@ -129,6 +129,7 @@ final class Database
             self::projectMembersMigrations($pdo, $driver);
             self::testRunsCreatedByMigrations($pdo, $driver);
             self::testRunsAssignedToMigrations($pdo, $driver);
+            self::testRunsCompleteStateMigrations($pdo, $driver);
 
             return;
         }
@@ -144,6 +145,7 @@ final class Database
         self::projectMembersMigrations($pdo, $driver);
         self::testRunsCreatedByMigrations($pdo, $driver);
         self::testRunsAssignedToMigrations($pdo, $driver);
+        self::testRunsCompleteStateMigrations($pdo, $driver);
     }
 
     /** Nullable owner for tester-scoped run visibility. */
@@ -234,6 +236,180 @@ final class Database
             $ignore
         );
         self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_runs_assigned_to ON test_runs(assigned_to_user_id)', $ignore);
+    }
+
+    /** Allow run state `complete` (auto-set when every item is pass or fail). */
+    private static function testRunsCompleteStateMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'test_runs')) {
+            return;
+        }
+        if ($driver === 'sqlite') {
+            self::sqliteRebuildTestRunsIfStateCompleteDisallowed($pdo);
+        } elseif ($driver === 'mysql') {
+            self::mysqlUpgradeTestRunsStateCheck($pdo);
+        } elseif ($driver === 'pgsql') {
+            self::pgsqlUpgradeTestRunsStateCheck($pdo);
+        }
+        self::backfillAutoCompletedRuns($pdo);
+    }
+
+    private static function backfillAutoCompletedRuns(PDO $pdo): void
+    {
+        $pdo->exec(
+            "UPDATE test_runs SET state = 'complete'
+             WHERE state = 'open'
+               AND EXISTS (SELECT 1 FROM test_run_items i WHERE i.run_id = test_runs.id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM test_run_items i
+                 WHERE i.run_id = test_runs.id AND i.result NOT IN ('pass', 'fail')
+               )"
+        );
+    }
+
+    private static function sqliteTestRunsAcceptsStateComplete(PDO $pdo): bool
+    {
+        $sql = $pdo->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'test_runs'")->fetchColumn();
+        if (!is_string($sql)) {
+            return true;
+        }
+
+        return str_contains($sql, "'complete'") && str_contains($sql, 'state');
+    }
+
+    private static function sqliteRebuildTestRunsIfStateCompleteDisallowed(PDO $pdo): void
+    {
+        if (self::sqliteTestRunsAcceptsStateComplete($pdo)) {
+            return;
+        }
+
+        $hasCreatedBy = self::columnExists($pdo, 'sqlite', 'test_runs', 'created_by_user_id');
+        $hasAssignedTo = self::columnExists($pdo, 'sqlite', 'test_runs', 'assigned_to_user_id');
+
+        $pdo->exec('BEGIN IMMEDIATE');
+        try {
+            $createdByCol = $hasCreatedBy ? "created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  " : '';
+            $assignedCol = $hasAssignedTo ? "assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  " : '';
+            $pdo->exec(
+                "CREATE TABLE test_runs_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  suite_id INTEGER REFERENCES test_suites(id) ON DELETE SET NULL,
+  section_id INTEGER REFERENCES test_sections(id) ON DELETE SET NULL,
+  {$createdByCol}{$assignedCol}name TEXT NOT NULL,
+  run_kind TEXT NOT NULL DEFAULT 'full_suite' CHECK (run_kind IN ('full_suite', 'section', 'run_book')),
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'complete', 'locked', 'archived')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)"
+            );
+
+            $selectCols = 'id, project_id, suite_id, section_id';
+            if ($hasCreatedBy) {
+                $selectCols .= ', created_by_user_id';
+            }
+            if ($hasAssignedTo) {
+                $selectCols .= ', assigned_to_user_id';
+            }
+            $selectCols .= ', name, run_kind, state, created_at';
+
+            $pdo->exec(
+                "INSERT INTO test_runs_new ({$selectCols}) SELECT {$selectCols} FROM test_runs"
+            );
+            $pdo->exec('DROP TABLE test_runs');
+            $pdo->exec('ALTER TABLE test_runs_new RENAME TO test_runs');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_runs_project ON test_runs(project_id)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_runs_suite ON test_runs(suite_id)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_runs_section ON test_runs(section_id)');
+            if ($hasCreatedBy) {
+                $pdo->exec('CREATE INDEX IF NOT EXISTS idx_runs_created_by ON test_runs(created_by_user_id)');
+            }
+            if ($hasAssignedTo) {
+                $pdo->exec('CREATE INDEX IF NOT EXISTS idx_runs_assigned_to ON test_runs(assigned_to_user_id)');
+            }
+            $maxId = (int) $pdo->query('SELECT COALESCE(MAX(id), 0) FROM test_runs')->fetchColumn();
+            if ($maxId > 0) {
+                $pdo->exec("DELETE FROM sqlite_sequence WHERE name = 'test_runs'");
+                $pdo->exec('INSERT INTO sqlite_sequence (name, seq) VALUES (\'test_runs\', ' . $maxId . ')');
+            }
+            $pdo->exec('COMMIT');
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->exec('ROLLBACK');
+            }
+            throw $e;
+        }
+    }
+
+    private static function mysqlUpgradeTestRunsStateCheck(PDO $pdo): void
+    {
+        $stmt = $pdo->query(
+            "SELECT cc.constraint_name
+             FROM information_schema.check_constraints cc
+             INNER JOIN information_schema.table_constraints tc
+               ON tc.constraint_schema = cc.constraint_schema
+              AND tc.constraint_name = cc.constraint_name
+             WHERE tc.table_schema = DATABASE()
+               AND tc.table_name = 'test_runs'
+               AND tc.constraint_type = 'CHECK'
+               AND cc.check_clause LIKE '%state%'
+               AND cc.check_clause NOT LIKE '%complete%'"
+        );
+        if ($stmt === false) {
+            return;
+        }
+        $names = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($names as $name) {
+            if (!is_string($name) || $name === '') {
+                continue;
+            }
+            $ident = '`' . str_replace('`', '``', $name) . '`';
+            self::safeExec(
+                $pdo,
+                "ALTER TABLE test_runs DROP CHECK {$ident}",
+                ['check', "doesn't exist", 'unknown', 'failed', 'exist'],
+            );
+        }
+        self::safeExec(
+            $pdo,
+            "ALTER TABLE test_runs ADD CONSTRAINT test_runs_state_chk CHECK (state IN ('open', 'complete', 'locked', 'archived'))",
+            ['duplicate', 'already exists'],
+        );
+    }
+
+    private static function pgsqlUpgradeTestRunsStateCheck(PDO $pdo): void
+    {
+        $stmt = $pdo->query(
+            "SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+             FROM pg_constraint c
+             INNER JOIN pg_class rel ON rel.oid = c.conrelid
+             INNER JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+             WHERE rel.relname = 'test_runs'
+               AND nsp.nspname = CURRENT_SCHEMA()
+               AND c.contype = 'c'"
+        );
+        if ($stmt === false) {
+            return;
+        }
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $def = strtolower((string) ($row['def'] ?? ''));
+            if (!str_contains($def, 'state')) {
+                continue;
+            }
+            if (str_contains($def, 'complete')) {
+                continue;
+            }
+            $name = (string) ($row['conname'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $ident = '"' . str_replace('"', '""', $name) . '"';
+            self::safeExec($pdo, "ALTER TABLE test_runs DROP CONSTRAINT {$ident}", ['does not exist', 'undefined']);
+        }
+        self::safeExec(
+            $pdo,
+            "ALTER TABLE test_runs ADD CONSTRAINT test_runs_state_chk CHECK (state IN ('open', 'complete', 'locked', 'archived'))",
+            ['already exists', 'duplicate'],
+        );
     }
 
     /**

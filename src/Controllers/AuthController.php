@@ -44,17 +44,20 @@ final class AuthController
         $projectRoles = [];
         $isAdmin = false;
         $devPermissions = null;
+        $hasAssignedOpenRuns = false;
         if ($this->authorization->isDevMode()) {
             $userId = $this->authorization->requireUserId();
             $isAdmin = $this->authorization->isGlobalAdmin($userId);
             $projectRoles = $this->authorization->projectRolesForUser($userId);
             $devPermissions = DevPermissionSimulator::describe();
+            $hasAssignedOpenRuns = $this->authorization->hasOpenRunsAssignedToUser($userId);
         } elseif (!empty($_SESSION['user_id']) && is_numeric((string) $_SESSION['user_id'])) {
             $userId = (int) $_SESSION['user_id'];
             $user = $this->users->findById($userId);
             if ($user !== null && $this->settings->isAuthRequired()) {
                 $isAdmin = $this->authorization->isGlobalAdmin($userId);
                 $projectRoles = $this->authorization->projectRolesForUser($userId);
+                $hasAssignedOpenRuns = $this->authorization->hasOpenRunsAssignedToUser($userId);
             }
         }
 
@@ -66,6 +69,7 @@ final class AuthController
                 'user' => $user,
                 'is_admin' => $isAdmin,
                 'project_roles' => $projectRoles,
+                'has_assigned_open_runs' => $hasAssignedOpenRuns,
                 'dev_permissions' => $devPermissions,
             ],
         ]);

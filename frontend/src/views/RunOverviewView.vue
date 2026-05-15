@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { fetchRun, type RunDetail, type RunItemDetail, type RunItemSeverity, type TestStep } from '@/api';
+import {
+  canOpenRunSession,
+  fetchRun,
+  type RunDetail,
+  type RunItemDetail,
+  type RunItemSeverity,
+  type TestStep,
+} from '@/api';
 import { runOverviewSingleExpand } from '@/uiPreferences';
 
 const route = useRoute();
@@ -176,7 +183,9 @@ function evidenceShots(item: RunItemDetail): string[] {
   <div class="overview">
     <header class="top-bar">
       <RouterLink to="/runs" class="back">← Runs</RouterLink>
-      <RouterLink v-if="run?.state === 'open'" :to="sessionPath" class="link-continue">Continue session</RouterLink>
+      <RouterLink v-if="run && canOpenRunSession(run.state)" :to="sessionPath" class="link-continue"
+        >Continue session</RouterLink
+      >
     </header>
 
     <div v-if="loading" class="state">Loading run…</div>

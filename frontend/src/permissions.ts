@@ -138,6 +138,37 @@ export function canCreateProject(session: AuthSessionPayload | null | undefined)
   return values.includes('member');
 }
 
+export function isTesterOnAnyProject(session: AuthSessionPayload | null | undefined): boolean {
+  if (!session?.auth_required) {
+    if (!isDevSimulation(session)) {
+      return false;
+    }
+    const roles = Object.values(session.project_roles ?? {});
+    return roles.includes('tester');
+  }
+  if (isGlobalAdmin(session)) {
+    return false;
+  }
+  const roles = Object.values(session.project_roles ?? {});
+  return roles.includes('tester');
+}
+
+/** Testers with delegated open runs land on the runs hub after sign-in. */
+export function shouldTesterLandOnRunsHub(session: AuthSessionPayload | null | undefined): boolean {
+  if (!session?.auth_required || !session.user) {
+    return false;
+  }
+  return isTesterOnAnyProject(session) && session.has_assigned_open_runs === true;
+}
+
+/** Default route after sign-in when no explicit return_to is provided. */
+export function defaultLandingPath(session: AuthSessionPayload | null | undefined): string {
+  if (isViewerOnlyOnAllProjects(session) || shouldTesterLandOnRunsHub(session)) {
+    return '/runs';
+  }
+  return '/';
+}
+
 export function isViewerOnlyOnAllProjects(session: AuthSessionPayload | null | undefined): boolean {
   if (session?.auth_required) {
     if (isGlobalAdmin(session)) {

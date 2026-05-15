@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
   CONSTRAINT fk_test_runs_section FOREIGN KEY (section_id) REFERENCES test_sections (id) ON DELETE SET NULL,
   CONSTRAINT fk_test_runs_created_by FOREIGN KEY (created_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT fk_test_runs_assigned_to FOREIGN KEY (assigned_to_user_id) REFERENCES users (id) ON DELETE SET NULL,
-  CONSTRAINT test_runs_state_chk CHECK (state IN ('open', 'locked', 'archived')),
+  CONSTRAINT test_runs_state_chk CHECK (state IN ('open', 'complete', 'locked', 'archived')),
   CONSTRAINT test_runs_run_kind_chk CHECK (run_kind IN ('full_suite', 'section', 'run_book'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

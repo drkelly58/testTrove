@@ -11,7 +11,7 @@ if ($uri !== '/' && is_file($file)) {
 
 $spaIndex = __DIR__ . '/app/index.html';
 if (is_file($spaIndex)) {
-    if ($uri === '/' || $uri === '') {
+    if (in_array($uri, ['/', '', '/index.php'], true)) {
         header('Location: /app/', true, 302);
         return true;
     }

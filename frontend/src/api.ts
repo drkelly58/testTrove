@@ -304,6 +304,8 @@ export async function fetchCases(suiteId: number): Promise<TestCase[]> {
   return data.data;
 }
 
+export type RunState = 'open' | 'complete' | 'locked' | 'archived';
+
 /** Test execution: {@link RunSummary.run_kind} `run_book` is reserved for future custom run books. */
 export type RunSummary = {
   id: number;
@@ -316,6 +318,7 @@ export type RunSummary = {
   created_at: string;
   suite_name: string | null;
   section_name: string | null;
+  created_by_user_id: number | null;
   assigned_to_user_id: number | null;
   assigned_to_display_name: string | null;
   assigned_to_email: string | null;
@@ -336,6 +339,7 @@ export type RunDetail = {
   created_at: string;
   suite_name: string | null;
   section_name: string | null;
+  created_by_user_id: number | null;
   assigned_to_user_id: number | null;
   assigned_to_display_name: string | null;
   assigned_to_email: string | null;
@@ -377,9 +381,35 @@ export async function fetchProjectRuns(projectId: number): Promise<RunSummary[]>
   return data.data;
 }
 
+export type CreateRunBody = {
+  name?: string;
+  assigned_to_user_id?: number | null;
+};
+
+function createRunRequestBody(options?: string | CreateRunBody): CreateRunBody {
+  if (options === undefined) {
+    return {};
+  }
+  if (typeof options === 'string') {
+    const name = options.trim();
+    return name === '' ? {} : { name };
+  }
+  const body: CreateRunBody = {};
+  if (options.name !== undefined) {
+    const name = options.name.trim();
+    if (name !== '') {
+      body.name = name;
+    }
+  }
+  if (options.assigned_to_user_id !== undefined) {
+    body.assigned_to_user_id = options.assigned_to_user_id;
+  }
+  return body;
+}
+
 export async function createRunFromSuite(
   suiteId: number,
-  name?: string,
+  options?: string | CreateRunBody,
 ): Promise<{
   id: number;
   project_id: number;
@@ -394,7 +424,7 @@ export async function createRunFromSuite(
   const res = await apiFetch(`${base}/api/suites/${suiteId}/runs`, {
     method: 'POST',
     headers: jsonWriteHeaders,
-    body: JSON.stringify(name ? { name } : {}),
+    body: JSON.stringify(createRunRequestBody(options)),
   });
   const data = await parseJson<{
     data: {
@@ -419,7 +449,7 @@ export async function createRunFromSuite(
 
 export async function createRunFromSection(
   sectionId: number,
-  name?: string,
+  options?: string | CreateRunBody,
 ): Promise<{
   id: number;
   project_id: number;
@@ -434,7 +464,7 @@ export async function createRunFromSection(
   const res = await apiFetch(`${base}/api/sections/${sectionId}/runs`, {
     method: 'POST',
     headers: jsonWriteHeaders,
-    body: JSON.stringify(name ? { name } : {}),
+    body: JSON.stringify(createRunRequestBody(options)),
   });
   const data = await parseJson<{
     data: {
@@ -472,11 +502,158 @@ export function memberLabel(m: Pick<ProjectMember, 'display_name' | 'email'>): s
   return m.email;
 }
 
+/** Select options for delegating a run (unassigned, optional Me, then other testers). */
+export function runAssigneeSelectOptions(
+  testers: ProjectMember[],
+  currentUserId?: number | null,
+): { value: string | number; label: string }[] {
+  const options: { value: string | number; label: string }[] = [
+    { value: '', label: 'Unassigned (assign later)' },
+  ];
+  if (currentUserId != null && currentUserId > 0) {
+    options.push({ value: currentUserId, label: 'Me' });
+  }
+  for (const t of testers) {
+    if (t.user_id === currentUserId) {
+      continue;
+    }
+    options.push({ value: t.user_id, label: memberLabel(t) });
+  }
+  return options;
+}
+
+export function assignedToUserIdFromForm(
+  values: Record<string, string | number | boolean | null>,
+): number | null | undefined {
+  if (!('assigned_to_user_id' in values)) {
+    return undefined;
+  }
+  const raw = values.assigned_to_user_id;
+  if (raw === null || raw === '' || raw === undefined) {
+    return null;
+  }
+  const id = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function userIdEquals(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): boolean {
+  if (a == null || b == null) {
+    return false;
+  }
+  return Number(a) === Number(b);
+}
+
+/** No case in the run has been executed yet (all items still untested, or no items yet). */
+export function isRunNotStarted(r: Pick<RunSummary, 'item_count' | 'untested'>): boolean {
+  if (r.item_count === 0) {
+    return true;
+  }
+  return r.untested === r.item_count;
+}
+
+/** Run is owned by the current user (assigned to them, or unassigned and they created it). */
+export function isRunMine(
+  r: Pick<RunSummary, 'assigned_to_user_id' | 'created_by_user_id'>,
+  currentUserId: number | null | undefined,
+): boolean {
+  if (currentUserId == null) {
+    return false;
+  }
+  if (userIdEquals(r.assigned_to_user_id, currentUserId)) {
+    return true;
+  }
+  if (r.assigned_to_user_id == null && userIdEquals(r.created_by_user_id, currentUserId)) {
+    return true;
+  }
+  return false;
+}
+
+/** Owned by the current user, open, and no execution has begun — show Start test. */
+export function isRunAwaitingMyStart(
+  r: Pick<RunSummary, 'assigned_to_user_id' | 'created_by_user_id' | 'item_count' | 'untested' | 'state'>,
+  currentUserId: number | null | undefined,
+): boolean {
+  if (!isRunMine(r, currentUserId)) {
+    return false;
+  }
+  if (r.state !== 'open') {
+    return false;
+  }
+  return isRunNotStarted(r);
+}
+
+/**
+ * Runs hub: prominent Start test for your runs, or unassigned open runs (members often create without assignee).
+ */
+export function shouldShowStartTestOnHub(
+  r: Pick<RunSummary, 'assigned_to_user_id' | 'created_by_user_id' | 'item_count' | 'untested' | 'state'>,
+  currentUserId: number | null | undefined,
+  canRun: boolean,
+  canAssign: boolean,
+): boolean {
+  if (!canRun || r.state !== 'open' || !isRunNotStarted(r)) {
+    return false;
+  }
+  if (isRunMine(r, currentUserId)) {
+    return true;
+  }
+  return canAssign && r.assigned_to_user_id == null;
+}
+
+/** Run is delegated to a user other than the current viewer. */
+export function isRunDelegatedToOther(
+  r: Pick<RunSummary, 'assigned_to_user_id'>,
+  currentUserId: number | null | undefined,
+): boolean {
+  if (r.assigned_to_user_id == null) {
+    return false;
+  }
+  if (userIdEquals(r.assigned_to_user_id, currentUserId)) {
+    return false;
+  }
+  return true;
+}
+
+/** Delegated to another user, open, and no case results recorded yet. */
+export function isRunAwaitingOtherTester(
+  r: Pick<RunSummary, 'assigned_to_user_id' | 'item_count' | 'untested' | 'state'>,
+  currentUserId: number | null | undefined,
+): boolean {
+  if (r.assigned_to_user_id == null) {
+    return false;
+  }
+  if (userIdEquals(r.assigned_to_user_id, currentUserId)) {
+    return false;
+  }
+  if (r.state !== 'open') {
+    return false;
+  }
+  return isRunNotStarted(r);
+}
+
+/** True when the run is delegated to someone other than the current user. */
+export function isRunAssignedToOther(
+  values: Record<string, string | number | boolean | null>,
+  currentUserId: number | null | undefined,
+): boolean {
+  const assignedTo = assignedToUserIdFromForm(values);
+  if (assignedTo === undefined || assignedTo === null) {
+    return false;
+  }
+  if (currentUserId == null) {
+    return true;
+  }
+  return assignedTo !== currentUserId;
+}
+
 export async function updateRun(
   runId: number,
   body: {
     name?: string;
-    state?: 'open' | 'locked' | 'archived';
+    state?: RunState;
     assigned_to_user_id?: number | null;
   },
 ): Promise<RunDetail> {
@@ -508,6 +685,7 @@ export async function updateRunItem(
   screenshots: string[];
   video_url: string | null;
   executed_at: string | null;
+  run_state?: RunState;
 }> {
   const res = await apiFetch(`${base}/api/runs/${runId}/items/${itemId}`, {
     method: 'PATCH',
@@ -524,9 +702,15 @@ export async function updateRunItem(
       screenshots: string[];
       video_url: string | null;
       executed_at: string | null;
+      run_state?: RunState;
     };
   }>(res);
   return data.data;
+}
+
+/** Run session can be opened while open or auto-completed (still editable). */
+export function canOpenRunSession(state: string): boolean {
+  return state === 'open' || state === 'complete';
 }
 
 export async function createCase(

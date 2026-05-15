@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { refreshAuthSession } from '@/authContext';
 import { loadAuthSession, loginWithPassword, type AuthSessionPayload } from '@/authSession';
+import { defaultLandingPath } from '@/permissions';
 
 const route = useRoute();
 const router = useRouter();
@@ -64,9 +65,13 @@ function loginUrl(providerId: string): string {
   return `${base}/api/auth/login/${encodeURIComponent(providerId)}?return_to=${ret}`;
 }
 
-function returnPath(): string {
+function returnPath(session: AuthSessionPayload | null): string {
   const rt = typeof route.query.return_to === 'string' ? route.query.return_to : '/';
-  return rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
+  const safe = rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
+  if (safe === '/' || safe === '/login') {
+    return defaultLandingPath(session);
+  }
+  return safe;
 }
 
 async function submitLocal(ev: Event) {
@@ -75,8 +80,8 @@ async function submitLocal(ev: Event) {
   signingIn.value = true;
   try {
     await loginWithPassword(email.value.trim(), password.value);
-    await refreshAuthSession();
-    await router.push(returnPath());
+    const s = await refreshAuthSession();
+    await router.push(returnPath(s));
   } catch (e) {
     formError.value = e instanceof Error ? e.message : 'Sign-in failed';
   } finally {

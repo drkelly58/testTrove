@@ -31,6 +31,8 @@ export type AuthSessionPayload = {
   user: AuthUser | null;
   is_admin?: boolean;
   project_roles?: Record<number, ProjectRole>;
+  /** Open runs delegated to the signed-in user (from session API). */
+  has_assigned_open_runs?: boolean;
   dev_permissions?: DevPermissionsPayload | null;
 };
 
@@ -52,6 +54,7 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
     local_login_enabled: j.data.local_login_enabled ?? false,
     is_admin: j.data.is_admin ?? false,
     project_roles: j.data.project_roles ?? {},
+    has_assigned_open_runs: j.data.has_assigned_open_runs ?? false,
     dev_permissions: j.data.dev_permissions ?? null,
   });
   if (cached.user) {

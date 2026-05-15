@@ -207,6 +207,9 @@ async function patchCurrentItem(result: string, mode: 'setResult' | 'notes', adv
     item.screenshots = res.screenshots;
     item.video_url = res.video_url;
     item.executed_at = res.executed_at;
+    if (res.run_state && run.value) {
+      run.value = { ...run.value, state: res.run_state };
+    }
     if (advance && index.value < items.value.length - 1) {
       index.value += 1;
     }
@@ -249,7 +252,7 @@ async function setResult(result: string) {
           <span class="state-badge">{{ run.state }}</span>
           <div v-if="run.state !== 'archived'" class="run-state-actions">
             <button
-              v-if="run.state === 'open'"
+              v-if="run.state === 'open' || run.state === 'complete'"
               type="button"
               class="btn sm ghost"
               :disabled="runStateBusy"
@@ -258,7 +261,7 @@ async function setResult(result: string) {
               Lock run
             </button>
             <button
-              v-if="run.state === 'open' || run.state === 'locked'"
+              v-if="run.state === 'open' || run.state === 'complete' || run.state === 'locked'"
               type="button"
               class="btn sm ghost"
               :disabled="runStateBusy"

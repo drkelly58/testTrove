@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
   assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   run_kind TEXT NOT NULL DEFAULT 'full_suite' CHECK (run_kind IN ('full_suite', 'section', 'run_book')),
-  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'locked', 'archived')),
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'complete', 'locked', 'archived')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

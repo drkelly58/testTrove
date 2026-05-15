@@ -28,6 +28,24 @@ use Slim\Handlers\ErrorHandler;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
+// When the host sends non-API requests to index.php (DirectoryIndex or broken .htaccess), serve the Vue SPA.
+$requestPath = urldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
+$isSiteRoot = in_array($requestPath, ['/', '', '/index.php'], true);
+if (!str_starts_with($requestPath, '/api')) {
+    $spaIndex = __DIR__ . '/app/index.html';
+    if (is_file($spaIndex)) {
+        if ($isSiteRoot) {
+            header('Location: /app/', true, 302);
+            exit;
+        }
+        if ($requestPath === '/app' || $requestPath === '/app/' || str_starts_with($requestPath, '/app/')) {
+            header('Content-Type: text/html; charset=UTF-8');
+            readfile($spaIndex);
+            exit;
+        }
+    }
+}
+
 $root = dirname(__DIR__);
 if (is_readable($root . '/.env')) {
     Dotenv::createImmutable($root)->safeLoad();

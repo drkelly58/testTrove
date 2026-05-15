@@ -3,7 +3,7 @@ import App from './App.vue';
 import { refreshAuthSession } from './authContext';
 import { bootstrapDevPermissionsFromUrl } from './devPermissions';
 import { loadAuthSession } from './authSession';
-import { canManageUsers, isViewerOnlyOnAllProjects } from './permissions';
+import { canManageUsers, defaultLandingPath } from './permissions';
 import { router } from './router';
 import { bootstrapThemeFromStorage } from './theme';
 import './styles/theme.css';
@@ -20,9 +20,13 @@ router.beforeEach(async (to) => {
   }
   if (to.name === 'login' && s.auth_required && s.user) {
     const rt = typeof to.query.return_to === 'string' ? to.query.return_to : '/';
-    return rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
+    const safe = rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
+    if (safe === '/' || safe === '/login') {
+      return defaultLandingPath(s);
+    }
+    return safe;
   }
-  if (s.auth_required && s.user && to.name === 'home' && isViewerOnlyOnAllProjects(s)) {
+  if (s.auth_required && s.user && to.name === 'home' && defaultLandingPath(s) === '/runs') {
     return { name: 'runs' };
   }
   if ((to.meta as { requiresAdmin?: boolean }).requiresAdmin && !canManageUsers(s)) {

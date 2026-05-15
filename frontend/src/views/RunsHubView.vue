@@ -9,9 +9,13 @@ import {
   deleteRun,
   fetchProjectMembers,
   fetchProjectRuns,
-  memberLabel,
+  isRunAwaitingOtherTester,
+  isRunDelegatedToOther,
+  runAssigneeSelectOptions,
+  shouldShowStartTestOnHub,
   updateRun,
   type ProjectMember,
+  type RunState,
   type RunSummary,
 } from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
@@ -63,6 +67,7 @@ function openEditRun(r: RunSummary) {
       initial: r.state,
       options: [
         { value: 'open', label: 'open' },
+        { value: 'complete', label: 'complete' },
         { value: 'locked', label: 'locked' },
         { value: 'archived', label: 'archived' },
       ],
@@ -93,7 +98,7 @@ async function saveEditRun(values: Record<string, string | number | boolean | nu
   try {
     await updateRun(r.id, {
       name: String(values.name ?? '').trim(),
-      state: values.state as 'open' | 'locked' | 'archived',
+      state: values.state as RunState,
     });
     closeEditRun();
     await loadRuns(pid);
@@ -169,7 +174,7 @@ function assigneeLabel(r: RunSummary): string {
 
 function isAssignedToMe(r: RunSummary): boolean {
   const uid = currentUserId.value;
-  return uid !== null && r.assigned_to_user_id === uid;
+  return uid !== null && r.assigned_to_user_id != null && Number(r.assigned_to_user_id) === Number(uid);
 }
 
 async function loadTesters(pid: number) {
@@ -307,9 +312,12 @@ watch(canAssign, async (allowed) => {
                     :disabled="assignBusyRunId === r.id || testersLoading"
                     @change="onAssignChange(r, ($event.target as HTMLSelectElement).value)"
                   >
-                    <option value="">Unassigned</option>
-                    <option v-for="t in projectTesters" :key="t.user_id" :value="t.user_id">
-                      {{ memberLabel(t) }}
+                    <option
+                      v-for="opt in runAssigneeSelectOptions(projectTesters, currentUserId)"
+                      :key="String(opt.value)"
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
                     </option>
                   </select>
                   <template v-else>
@@ -325,8 +333,33 @@ watch(canAssign, async (allowed) => {
                 </td>
                 <td class="col-actions">
                   <div class="run-row-actions">
-                    <RouterLink v-if="canView" class="link" :to="'/runs/' + r.id + '/overview'">Overview</RouterLink>
-                    <RouterLink v-if="canRun" class="link" :to="'/runs/' + r.id">Continue</RouterLink>
+                    <RouterLink
+                      v-if="shouldShowStartTestOnHub(r, currentUserId, canRun, canAssign)"
+                      class="btn-start-test"
+                      :to="'/runs/' + r.id"
+                    >
+                      Start test
+                    </RouterLink>
+                    <template v-else>
+                      <span
+                        v-if="canAssign && isRunAwaitingOtherTester(r, currentUserId)"
+                        class="pending-pill pending-action"
+                      >
+                        Pending
+                      </span>
+                      <RouterLink
+                        v-else-if="canView"
+                        class="link"
+                        :to="'/runs/' + r.id + '/overview'"
+                        >Overview</RouterLink
+                      >
+                      <RouterLink
+                        v-if="canRun && !(canAssign && isRunDelegatedToOther(r, currentUserId))"
+                        class="link"
+                        :to="'/runs/' + r.id"
+                        >Continue</RouterLink
+                      >
+                    </template>
                     <IconButton
                       v-if="canManage"
                       label="Edit run"
@@ -467,6 +500,21 @@ watch(canAssign, async (allowed) => {
   font-size: 0.82rem;
 }
 
+.pending-pill {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  color: var(--neutral-slate);
+  background: color-mix(in srgb, var(--neutral-slate) 14%, var(--panel-2));
+  border: 1px solid color-mix(in srgb, var(--neutral-slate) 35%, var(--border));
+}
+
+.pending-action {
+  font-size: 0.82rem;
+}
+
 .link {
   font-weight: 600;
   color: var(--accent-2);
@@ -519,5 +567,28 @@ watch(canAssign, async (allowed) => {
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--accent-2);
+}
+
+.btn-start-test {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  color: #fff;
+  background: var(--action-purple);
+  border: 1px solid color-mix(in srgb, var(--action-purple) 70%, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--action-purple) 40%, transparent);
+  white-space: nowrap;
+}
+
+.btn-start-test:hover {
+  background: var(--accent-2);
+  text-decoration: none;
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--action-purple) 50%, transparent);
 }
 </style>

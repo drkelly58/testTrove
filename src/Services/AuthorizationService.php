@@ -259,6 +259,37 @@ final class AuthorizationService
         return $this->canManageRuns($userId, $projectId);
     }
 
+    /** Whether the user has at least one open run delegated to them. */
+    public function hasOpenRunsAssignedToUser(int $userId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return false;
+        }
+        $st = $this->pdo->prepare(
+            'SELECT 1 FROM test_runs WHERE assigned_to_user_id = :uid AND state = \'open\' LIMIT 1'
+        );
+        $st->execute(['uid' => $userId]);
+
+        return (bool) $st->fetchColumn();
+    }
+
+    public function isTesterOnAnyProject(int $userId): bool
+    {
+        if ($this->isOpenAccess()) {
+            return false;
+        }
+        if ($this->isGlobalAdmin($userId)) {
+            return false;
+        }
+        foreach ($this->projectRolesForUser($userId) as $role) {
+            if ($role === ProjectRole::TESTER) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function canManageRuns(int $userId, int $projectId): bool
     {
         return $this->canWriteProject($userId, $projectId);

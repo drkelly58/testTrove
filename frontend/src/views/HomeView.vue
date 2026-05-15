@@ -7,7 +7,9 @@ import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import IconButton from '@/components/IconButton.vue';
 import type { FieldDef } from '@/components/EntityFormDialog.vue';
 import {
+  assignedToUserIdFromForm,
   bulkSetCasesStatus,
+  isRunAssignedToOther,
   createCase,
   createRunFromSection,
   createRunFromSuite,
@@ -20,16 +22,20 @@ import {
   duplicateCase,
   duplicateSuite,
   fetchCases,
+  fetchProjectMembers,
   fetchProjectRuns,
   fetchSections,
   fetchSuites,
   moveCaseToSuite,
   moveStepBetweenCases,
+  runAssigneeSelectOptions,
   updateProject,
   updateSection,
   updateSuite,
   type CaseWorkflowStatus,
+  type CreateRunBody,
   type Project,
+  type ProjectMember,
   type RunSummary,
   type Section,
   type Suite,
@@ -37,7 +43,13 @@ import {
 } from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
-import { canExecuteRuns, canReadCatalog, canWriteCatalog, projectRoleFor } from '@/permissions';
+import {
+  canAssignRuns,
+  canExecuteRuns,
+  canReadCatalog,
+  canWriteCatalog,
+  projectRoleFor,
+} from '@/permissions';
 import { stepsAsArray } from '@/stepsModel';
 
 const router = useRouter();
@@ -51,6 +63,23 @@ void loadAuthSession().then((s) => {
 const canRead = computed(() => canReadCatalog(authSession.value, projectCtx.projectId));
 const canWrite = computed(() => canWriteCatalog(authSession.value, projectCtx.projectId));
 const canRun = computed(() => canExecuteRuns(authSession.value, projectCtx.projectId));
+const canAssign = computed(() => canAssignRuns(authSession.value, projectCtx.projectId));
+const currentUserId = computed(() => authSession.value?.user?.id ?? null);
+
+const projectTesters = ref<ProjectMember[]>([]);
+
+async function loadProjectTesters(pid: number) {
+  if (!canAssign.value) {
+    projectTesters.value = [];
+    return;
+  }
+  try {
+    const members = await fetchProjectMembers(pid);
+    projectTesters.value = members.filter((m) => m.role === 'tester');
+  } catch {
+    projectTesters.value = [];
+  }
+}
 
 watch(
   () => [projectCtx.projectId, authSession.value] as const,
@@ -312,9 +341,11 @@ watch(
         explorerRunsProjectId.value = null;
         explorerRunsLoading.value = false;
         explorerRunsError.value = false;
+        projectTesters.value = [];
         return;
       }
       void fetchExplorerRuns(pid);
+      void loadProjectTesters(pid);
       await loadSuites(pid);
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load';
@@ -411,6 +442,73 @@ function resolveSectionForEdit(sec: Section): Section {
   return sections.value.find((x) => x.id === sec.id) ?? sec;
 }
 
+function buildRunDialogFields(nameInitial: string): FieldDef[] {
+  const fields: FieldDef[] = [
+    {
+      key: 'name',
+      label: 'Run name',
+      kind: 'text',
+      required: true,
+      initial: nameInitial,
+      autofocus: true,
+    },
+  ];
+  if (canAssign.value && (projectTesters.value.length > 0 || currentUserId.value != null)) {
+    fields.push({
+      key: 'assigned_to_user_id',
+      label: 'Who will be performing this test?',
+      kind: 'select',
+      initial: '',
+      options: runAssigneeSelectOptions(projectTesters.value, currentUserId.value),
+      help: 'Optional. Assigned testers will see this run in their Test runs list.',
+    });
+  }
+  return fields;
+}
+
+function createRunBodyFromDialog(
+  name: string,
+  values: Record<string, string | number | boolean | null>,
+): CreateRunBody {
+  const body: CreateRunBody = { name };
+  const assignedTo = assignedToUserIdFromForm(values);
+  if (assignedTo !== undefined) {
+    body.assigned_to_user_id = assignedTo;
+  }
+  return body;
+}
+
+function isRunDialogCtx(ctx: TreeDialogCtx | null): ctx is
+  | { kind: 'suite-run'; suiteId: number }
+  | { kind: 'section-run'; sectionId: number } {
+  return ctx?.kind === 'suite-run' || ctx?.kind === 'section-run';
+}
+
+function resolveRunDialogSubmitLabel(
+  values: Record<string, string | number | boolean | null>,
+): string {
+  if (!isRunDialogCtx(treeDialogCtx.value)) {
+    return treeDialogSubmitLabel.value;
+  }
+  return isRunAssignedToOther(values, currentUserId.value) ? 'Assign test' : 'Start test run';
+}
+
+async function afterRunCreated(
+  runId: number,
+  values: Record<string, string | number | boolean | null>,
+): Promise<void> {
+  closeTreeDialog();
+  const pid = projectCtx.projectId;
+  if (pid !== null) {
+    void fetchExplorerRuns(pid);
+  }
+  if (isRunAssignedToOther(values, currentUserId.value)) {
+    await router.push({ name: 'runs' });
+    return;
+  }
+  await router.push(`/runs/${runId}`);
+}
+
 function defaultRunName(label: string): string {
   const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
   return `Run: ${label} · ${ts}`;
@@ -470,39 +568,29 @@ function startEditSection(s: Section) {
   ];
 }
 
-function openSuiteRunDialog(s: Suite) {
+async function openSuiteRunDialog(s: Suite) {
+  const pid = projectCtx.projectId;
+  if (pid !== null) {
+    await loadProjectTesters(pid);
+  }
   treeDialogCtx.value = { kind: 'suite-run', suiteId: s.id };
   treeDialogTitle.value = 'Start test run';
   treeDialogSubmitLabel.value = 'Start run';
   treeDialogError.value = null;
-  treeDialogFields.value = [
-    {
-      key: 'name',
-      label: 'Run name',
-      kind: 'text',
-      required: true,
-      initial: defaultRunName(s.name),
-      autofocus: true,
-    },
-  ];
+  treeDialogFields.value = buildRunDialogFields(defaultRunName(s.name));
 }
 
-function openSectionRunDialog(section: Section) {
+async function openSectionRunDialog(section: Section) {
   const suiteN = selectedSuite.value?.name ?? 'Suite';
+  const pid = projectCtx.projectId;
+  if (pid !== null) {
+    await loadProjectTesters(pid);
+  }
   treeDialogCtx.value = { kind: 'section-run', sectionId: section.id };
   treeDialogTitle.value = 'Start test run';
   treeDialogSubmitLabel.value = 'Start run';
   treeDialogError.value = null;
-  treeDialogFields.value = [
-    {
-      key: 'name',
-      label: 'Run name',
-      kind: 'text',
-      required: true,
-      initial: defaultRunName(`${suiteN} / ${section.name}`),
-      autofocus: true,
-    },
-  ];
+  treeDialogFields.value = buildRunDialogFields(defaultRunName(`${suiteN} / ${section.name}`));
 }
 
 function onTreeDialogModel(open: boolean) {
@@ -550,22 +638,12 @@ async function onTreeDialogSubmit(values: Record<string, string | number | boole
       await loadCases(ctx.suiteId);
     } else if (ctx.kind === 'suite-run') {
       const name = String(values.name ?? '').trim();
-      const r = await createRunFromSuite(ctx.suiteId, name);
-      closeTreeDialog();
-      const pid = projectCtx.projectId;
-      if (pid !== null) {
-        void fetchExplorerRuns(pid);
-      }
-      await router.push(`/runs/${r.id}`);
-    } else {
+      const r = await createRunFromSuite(ctx.suiteId, createRunBodyFromDialog(name, values));
+      await afterRunCreated(r.id, values);
+    } else if (ctx.kind === 'section-run') {
       const name = String(values.name ?? '').trim();
-      const r = await createRunFromSection(ctx.sectionId, name);
-      closeTreeDialog();
-      const pid = projectCtx.projectId;
-      if (pid !== null) {
-        void fetchExplorerRuns(pid);
-      }
-      await router.push(`/runs/${r.id}`);
+      const r = await createRunFromSection(ctx.sectionId, createRunBodyFromDialog(name, values));
+      await afterRunCreated(r.id, values);
     }
   } catch (err) {
     treeDialogError.value = err instanceof Error ? err.message : 'Request failed';
@@ -1359,6 +1437,7 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
       :title="treeDialogTitle"
       :fields="treeDialogFields"
       :submit-label="treeDialogSubmitLabel"
+      :resolve-submit-label="isRunDialogCtx(treeDialogCtx) ? resolveRunDialogSubmitLabel : undefined"
       :busy="treeDialogBusy"
       :error-message="treeDialogError"
       @submit="onTreeDialogSubmit"
