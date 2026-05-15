@@ -184,28 +184,31 @@ async function submitNewProject(values: Record<string, string | number | boolean
       </div>
 
       <div class="project-bar" aria-label="Workspace project">
-        <label class="project-bar-label">
-          <span class="project-bar-lab">Project</span>
-          <select
-            class="project-select"
-            :value="projectId ?? ''"
-            :disabled="projectsLoading || !!projectsError || !projects.length"
-            @change="onProjectSelect"
-          >
-            <option value="" disabled>{{ projectsLoading ? 'Loading…' : projects.length ? 'Choose…' : 'No projects' }}</option>
-            <option v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
-          </select>
-        </label>
-        <IconButton
-          type="button"
-          accent
-          label="New project"
-          title="New project"
-          :disabled="newProjectBusy"
-          @click="openNewProjectDialog"
-        >
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-        </IconButton>
+        <div class="project-bar-field">
+          <label id="workspace-project-label" class="project-bar-lab" for="workspace-project-select">Project</label>
+          <div class="project-bar-controls">
+            <select
+              id="workspace-project-select"
+              class="project-select"
+              :value="projectId ?? ''"
+              :disabled="projectsLoading || !!projectsError || !projects.length"
+              @change="onProjectSelect"
+            >
+              <option value="" disabled>{{ projectsLoading ? 'Loading…' : projects.length ? 'Choose…' : 'No projects' }}</option>
+              <option v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
+            </select>
+            <IconButton
+              type="button"
+              accent
+              label="New project"
+              title="Add New project"
+              :disabled="newProjectBusy"
+              @click="openNewProjectDialog"
+            >
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </IconButton>
+          </div>
+        </div>
         <p v-if="projectsError" class="project-bar-err">{{ projectsError }}</p>
       </div>
 
@@ -311,11 +314,17 @@ a {
   min-width: min(320px, 100%);
 }
 
-.project-bar-label {
+.project-bar-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
   min-width: 0;
+}
+
+.project-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .project-bar-lab {
