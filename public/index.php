@@ -26,8 +26,6 @@ use Slim\Error\Renderers\JsonErrorRenderer;
 use Slim\Factory\AppFactory;
 use Slim\Handlers\ErrorHandler;
 
-require dirname(__DIR__) . '/vendor/autoload.php';
-
 /**
  * True when this request should hit Slim / JSON (not SPA static HTML).
  * Matches {@code RewriteCond %{REQUEST_URI} /api(?:/|$)} in {@code public/.htaccess}.
@@ -35,6 +33,44 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 function tt_request_targets_api(string $requestPath): bool
 {
     return $requestPath === '/api' || str_starts_with($requestPath, '/api/');
+}
+
+/** JSON error for /api when bootstrap dies before Slim (empty 500 on shared hosts). */
+function tt_api_emit_json_error(int $status, string $error, ?string $message = null): void
+{
+    if (headers_sent()) {
+        return;
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    http_response_code($status);
+    $payload = ['error' => $error];
+    if ($message !== null && $message !== '') {
+        $payload['message'] = $message;
+    }
+    $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+    if (defined('JSON_INVALID_UTF8_SUBSTITUTE')) {
+        $flags |= JSON_INVALID_UTF8_SUBSTITUTE;
+    }
+    echo json_encode($payload, $flags) ?: '{"error":"error"}';
+}
+
+function tt_api_register_fatal_shutdown(): void
+{
+    register_shutdown_function(static function (): void {
+        if (headers_sent()) {
+            return;
+        }
+        $err = error_get_last();
+        if ($err === null) {
+            return;
+        }
+        if (!in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            return;
+        }
+        $msg = isset($err['message']) ? (string) $err['message'] : 'Unknown fatal error';
+        tt_api_emit_json_error(500, 'php_fatal', $msg);
+    });
 }
 
 // When the host sends non-API requests to index.php (DirectoryIndex or broken .htaccess), serve the Vue SPA.
@@ -60,12 +96,26 @@ if (!tt_request_targets_api($requestPath)) {
 }
 
 $root = dirname(__DIR__);
+$isApiRequest = tt_request_targets_api($requestPath);
+$autoload = $root . '/vendor/autoload.php';
+if ($isApiRequest) {
+    tt_api_register_fatal_shutdown();
+    if (!is_file($autoload)) {
+        tt_api_emit_json_error(
+            503,
+            'composer_vendor_missing',
+            'Run composer install in the project root (parent of the web directory).',
+        );
+        exit;
+    }
+}
+require $autoload;
+
 if (is_readable($root . '/.env')) {
     Dotenv::createImmutable($root)->safeLoad();
 }
 
 $appDebug = ($_ENV['APP_DEBUG'] ?? '') === '1' || strtolower((string) ($_ENV['APP_DEBUG'] ?? '')) === 'true';
-$isApiRequest = tt_request_targets_api($requestPath);
 
 try {
     $dbDriver = Database::normalizeDriver($_ENV['DB_DRIVER'] ?? 'sqlite');
@@ -98,6 +148,8 @@ try {
     }
 
     $app = AppFactory::create();
+    // Shared hosts may set SCRIPT_NAME to /api/index.php; routes are registered as /api/*.
+    $app->setBasePath('');
     $app->addRoutingMiddleware();
     $app->addBodyParsingMiddleware();
     $errorMiddleware = $app->addErrorMiddleware($appDebug, true, true);
@@ -192,7 +244,19 @@ try {
     $app->delete('/api/runs/{runId}', [$runs, 'delete']);
     $app->patch('/api/runs/{runId}/items/{itemId}', [$runs, 'updateItem']);
 
-    $app->run();
+    try {
+        $app->run();
+    } catch (\Throwable $runError) {
+        if (!$isApiRequest) {
+            throw $runError;
+        }
+        tt_api_emit_json_error(
+            500,
+            'request_failed',
+            $appDebug ? $runError->getMessage() : 'See server error log or set APP_DEBUG=1 in .env.',
+        );
+        exit;
+    }
 } catch (\Throwable $e) {
     if (!$isApiRequest) {
         throw $e;

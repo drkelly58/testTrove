@@ -17,6 +17,7 @@ TestTrove is a **test case management** application: organize projects, suites, 
   - **Local email + password** (`AUTH_LOCAL_ENABLED`), with optional one-time bootstrap admin user.
 - **Authorization**: Global roles (`admin` / `user`) and per-project roles (`member`, `tester`, `viewer`). Admins get full access; other users are scoped via `project_members`.
 - **User administration**: Global admins can manage users (`/admin/users` in the SPA).
+- **Email notifications (optional)**: When outbound mail is configured on the server, signed-in users can opt in via **Preferences** for assignment and run-completion emails (see [Email notifications](#email-notifications)).
 - **Developer convenience**: When auth is disabled, the SPA can simulate RBAC using URL query parameters (see [Developer notes](#developer-notes)).
 
 ---
@@ -146,8 +147,32 @@ This emits assets to **`public/app/`** (`emptyOutDir: true`). See [Deployment](#
 | `DB_PATH` | SQLite file path (absolute or relative to project root) |
 | `APP_BASE_URL` | Public URL for OAuth redirects |
 | `AUTH_*` / `OAUTH_*` | Local login and OAuth client credentials — see `.env.example` |
+| `MAIL_*` | Optional outbound mail for run notification emails — see [Email notifications](#email-notifications) and `.env.example` |
 
 When **any** OAuth client id or **`AUTH_LOCAL_ENABLED`** is set, **`RequireAuthMiddleware`** treats the API as authenticated: `/api/auth/*` and `/api/health` stay public; other `/api/*` routes expect a valid session.
+
+### Email notifications
+
+Run notification email is **off by default**. The server must have outbound mail configured; users then opt in per account in the SPA (**Preferences** → **Email notifications**). The section appears only when you are signed in and the instance reports mail as available (`email_notifications_available` on `/api/auth/session`).
+
+**Enable on the server** (in `.env` on each environment — not in `scripts/deploy.env`):
+
+1. Set **`MAIL_ENABLED=1`** (or `true` / `yes`).
+2. Set a valid **`MAIL_FROM`** (e.g. `TestTrove <noreply@example.com>`) or **`MAIL_FROM_ADDRESS`** + **`MAIL_FROM_NAME`**.
+3. Choose transport:
+   - **`MAIL_TRANSPORT=php`** — PHP `mail()` (host must allow outbound mail from PHP).
+   - **`MAIL_TRANSPORT=smtp`** — set **`MAIL_SMTP_HOST`**, **`MAIL_SMTP_PORT`**, and optionally **`MAIL_SMTP_USER`**, **`MAIL_SMTP_PASSWORD`**, **`MAIL_SMTP_ENCRYPTION`** (`tls` or `ssl`).
+
+Set **`APP_BASE_URL`** to your public URL (scheme + host, no trailing slash) so links in emails match your deployment (same requirement as OAuth).
+
+**What users can opt into** (stored in `users.preferences`):
+
+| Preference | When mail is sent |
+|------------|-------------------|
+| When I'm assigned a test run | Someone assigns you a run (not self-assignment). |
+| When a run I created … is completed | A run you created, assigned to someone else, reaches auto-complete. |
+
+Copy the commented block from **`.env.example`** (`# --- Email notifications ---`) as a starting point. For staging/production, configure mail in each server’s **`.env`** manually (deploy scripts do not upload or overwrite `.env`).
 
 ---
 
@@ -175,8 +200,9 @@ Typical **cPanel / Plesk / budget Apache** plans—often no root shell and no No
 3. **PHP in the panel**: Pick **PHP 8.1+** and enable the PDO extension for **`DB_DRIVER`** (`pdo_sqlite`, `pdo_mysql`, or `pdo_pgsql`).
 4. **Database**: Prefer the provider’s **MySQL** when **`storage/`** is not reliably writable for SQLite; set **`DB_DRIVER=mysql`** and the credentials from the host.
 5. **OAuth / URLs**: Set **`APP_BASE_URL`** to your live **`https://…`** URL so redirect URIs match what you registered at Microsoft/Google/GitHub/your IdP.
-6. **Provider quirks**: Some hosts disable **`AllowOverride`** or strip **`Cache-Control`**—if APIs look cached or **`/api`** 404s, open a ticket or adjust “Apache handlers” / nginx cache settings per their docs.
-7. **Subdirectory installs**: If the site is not at the domain root (e.g. **`https://example.com/testtrove/`**), you may need **`RewriteBase`** in **`public/.htaccess`** (see [Troubleshooting](#troubleshooting)).
+6. **Email notifications (optional)**: On the server **`.env`**, set **`MAIL_*`** as in [Email notifications](#email-notifications). Use your host’s SMTP relay or PHP `mail()` if allowed. Users opt in from **Preferences** after signing in.
+7. **Provider quirks**: Some hosts disable **`AllowOverride`** or strip **`Cache-Control`**—if APIs look cached or **`/api`** 404s, open a ticket or adjust “Apache handlers” / nginx cache settings per their docs.
+8. **Subdirectory installs**: If the site is not at the domain root (e.g. **`https://example.com/testtrove/`**), you may need **`RewriteBase`** in **`public/.htaccess`** (see [Troubleshooting](#troubleshooting)).
 
 ---
 
@@ -230,6 +256,7 @@ Import/export with `format=xlsx` is intentionally **not implemented**; the API r
 | SPA blank/black in **`npm run dev`** | Proxy default **`http://127.0.0.1`** (Apache :80): bad target if `/api` returns HTML—set **`VITE_API_PROXY_TARGET`**. **`php -S`** on **8080** needs **`http://127.0.0.1:8080`**. **`php -S`** as your user + **`storage/`** owned by **`www-data`** → SQLite errors—**`chown`/`chmod`** **`storage/`**. Visit **`http://localhost:5173/app/`**. |
 | Blank **`/app/`** after deploy | Run **`npm run build`**; confirm **`public/app/index.html`** exists; Apache/nginx must route **`/api/*`** to **`index.php`**, not the SPA fallback |
 | API 404 on Apache | `mod_rewrite`, `AllowOverride`, and `RewriteBase` if the app lives in a subdirectory |
+| No **Email notifications** in Preferences | Sign in; set **`MAIL_ENABLED=1`**, valid **`MAIL_FROM_*`**, and **`MAIL_TRANSPORT`** + SMTP host or PHP mail on the server **`.env`**; restart PHP / reload config; confirm `/api/auth/session` includes `"email_notifications_available": true` |
 
 ---
 

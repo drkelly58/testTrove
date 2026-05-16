@@ -1,6 +1,9 @@
 RewriteEngine On
 DirectoryIndex index.html index.php
 
+# /api/health via root health.php (avoids a physical api/ directory taking the request on some hosts).
+RewriteRule ^api/health$ health.php [L,QSA]
+
 # Do not cache JSON API responses (avoids stale GET /api/* behind CDNs and aggressive proxies).
 # Requires mod_headers (enabled on most Apache shared hosts; harmless no-op if absent).
 <IfModule mod_headers.c>

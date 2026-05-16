@@ -2,6 +2,7 @@
 /node_modules/
 /frontend/dist/
 .env
+scripts/deploy.env
 /storage/*.sqlite
 /storage/*.sqlite-journal
 /storage/sessions/*
