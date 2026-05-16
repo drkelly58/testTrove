@@ -83,7 +83,7 @@ final class RunController
              LEFT JOIN test_sections sec ON sec.id = r.section_id
              LEFT JOIN users assignee ON assignee.id = r.assigned_to_user_id
              WHERE r.project_id = :pid' . $ownerFilter . '
-             ORDER BY r.id DESC'
+             ORDER BY r.created_at ASC, r.id ASC'
         );
         $stmt->execute($params);
         $rows = $stmt->fetchAll();

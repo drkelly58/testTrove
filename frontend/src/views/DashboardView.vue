@@ -152,7 +152,14 @@ const stateAriaLabel = computed(() => {
   return `Runs by state: ${parts.join(', ')}`;
 });
 
-const recentRuns = computed(() => runs.value.slice(0, 6));
+const recentRuns = computed(() =>
+  [...runs.value]
+    .sort((a, b) => {
+      const t = b.created_at.localeCompare(a.created_at);
+      return t !== 0 ? t : b.id - a.id;
+    })
+    .slice(0, 6),
+);
 
 function formatShortDate(iso: string): string {
   const d = new Date(iso);

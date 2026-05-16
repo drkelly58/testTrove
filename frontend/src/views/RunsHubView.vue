@@ -20,7 +20,7 @@ import {
 } from '@/api';
 import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
-import { canAssignRuns, canExecuteRuns, canManageRuns, canViewRuns } from '@/permissions';
+import { canAssignRuns, canExecuteRuns, canManageRuns, canViewRuns, projectRoleFor } from '@/permissions';
 
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
 
@@ -41,6 +41,23 @@ const assignBusyRunId = ref<number | null>(null);
 const runs = ref<RunSummary[]>([]);
 const runsLoading = ref(false);
 const runsError = ref<string | null>(null);
+
+const isTesterOnProject = computed(
+  () => projectRoleFor(authSession.value, projectCtx.projectId) === 'tester',
+);
+const showHiddenRuns = ref(false);
+const hiddenRunsToggleLabel = computed(() =>
+  isTesterOnProject.value ? 'Show completed and archived runs' : 'Show archived runs',
+);
+const visibleRuns = computed(() => {
+  if (showHiddenRuns.value) {
+    return runs.value;
+  }
+  if (isTesterOnProject.value) {
+    return runs.value.filter((r) => r.state !== 'complete' && r.state !== 'archived');
+  }
+  return runs.value.filter((r) => r.state !== 'archived');
+});
 
 const deleteRunTarget = ref<RunSummary | null>(null);
 const deleteOpen = ref(false);
@@ -233,6 +250,7 @@ async function loadRuns(pid: number) {
 watch(
   () => projectCtx.projectId,
   async (pid) => {
+    showHiddenRuns.value = false;
     if (pid === null) {
       runs.value = [];
       projectTesters.value = [];
@@ -281,7 +299,20 @@ watch(canAssign, async (allowed) => {
             start a run.
           </p>
 
-          <table v-else class="tbl">
+          <template v-else>
+            <label class="runs-filter">
+              <input v-model="showHiddenRuns" type="checkbox" />
+              <span>{{ hiddenRunsToggleLabel }}</span>
+            </label>
+
+            <p v-if="!visibleRuns.length" class="empty">
+              No runs match the current filter.
+              <button v-if="!showHiddenRuns" type="button" class="filter-expand" @click="showHiddenRuns = true">
+                {{ hiddenRunsToggleLabel }}
+              </button>
+            </p>
+
+            <table v-else class="tbl">
             <thead>
               <tr>
                 <th>Run</th>
@@ -293,7 +324,7 @@ watch(canAssign, async (allowed) => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="r in runs" :key="r.id">
+              <tr v-for="r in visibleRuns" :key="r.id">
                 <td>
                   <span class="run-name">{{ r.name }}</span>
                   <span class="meta">{{
@@ -389,6 +420,7 @@ watch(canAssign, async (allowed) => {
               </tr>
             </tbody>
           </table>
+          </template>
         </template>
       </template>
     </template>
@@ -448,6 +480,37 @@ watch(canAssign, async (allowed) => {
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.runs-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.runs-filter input {
+  cursor: pointer;
+}
+
+.filter-expand {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.filter-expand:hover {
+  color: var(--action-purple);
 }
 
 .tbl {
