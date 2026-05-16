@@ -11,6 +11,7 @@ use App\Auth\OAuthProviderFactory;
 use App\Auth\OAuthResourceProfileMapper;
 use App\JsonRequestBody;
 use App\JsonResponse;
+use App\Mail\MailSettings;
 use App\Services\AuthorizationService;
 use App\Services\LocalPasswordAuthenticator;
 use App\Services\OAuthUserProvisioner;
@@ -71,6 +72,7 @@ final class AuthController
                 'project_roles' => $projectRoles,
                 'has_assigned_open_runs' => $hasAssignedOpenRuns,
                 'dev_permissions' => $devPermissions,
+                'email_notifications_available' => MailSettings::fromEnv($_ENV)->isEnabled(),
             ],
         ]);
     }

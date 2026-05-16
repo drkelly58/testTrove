@@ -1,9 +1,25 @@
 import { ref } from 'vue';
 import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
-import { refreshProjects } from '@/projectContext';
+import {
+  projectId,
+  projects,
+  projectsError,
+  projectsLoading,
+  refreshProjects,
+} from '@/projectContext';
+import { setDefaultProjectIdPreference } from '@/userPreferences';
 
 /** Shared auth session for the shell (nav) and views that opt in. */
 export const authSession = ref<AuthSessionPayload | null>(null);
+
+/** When we are not calling `refreshProjects`, keep the shell off the indefinite “Loading…” state (`projectsLoading` defaults to true in projectContext.ts). */
+function idleProjectsWorkspace(): void {
+  projectsLoading.value = false;
+  projects.value = [];
+  projectId.value = null;
+  projectsError.value = null;
+  void setDefaultProjectIdPreference(null);
+}
 
 export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
   try {
@@ -11,10 +27,13 @@ export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
     authSession.value = s;
     if (!s.auth_required || s.user) {
       await refreshProjects();
+    } else {
+      idleProjectsWorkspace();
     }
     return s;
   } catch {
     authSession.value = null;
+    idleProjectsWorkspace();
     return null;
   }
 }
@@ -22,4 +41,5 @@ export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
 export function clearAuthSessionState(): void {
   clearAuthSessionCache();
   authSession.value = null;
+  idleProjectsWorkspace();
 }

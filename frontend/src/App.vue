@@ -227,6 +227,7 @@ async function submitNewProject(values: Record<string, string | number | boolean
       </div>
 
       <nav class="nav">
+        <RouterLink to="/dashboard" class="nav-link">Dashboard</RouterLink>
         <RouterLink v-if="showWorkspaceNav" to="/" class="nav-link">Workspace</RouterLink>
         <RouterLink to="/runs" class="nav-link">Runs</RouterLink>
         <RouterLink v-if="showUsersAdmin" to="/admin/users" class="nav-link">Users</RouterLink>

@@ -12,6 +12,10 @@ final class UserPreferences
     public const KEY_DEFAULT_PROJECT_ID = 'default_project_id';
     public const KEY_RUN_OVERVIEW_SINGLE_EXPAND = 'run_overview_single_expand';
     public const KEY_THEME = 'theme';
+    /** When instance mail is enabled: email me when I am assigned a test run. */
+    public const KEY_EMAIL_NOTIFY_RUN_ASSIGNED = 'email_notify_run_assigned';
+    /** When instance mail is enabled: email me when a run I created (assigned to someone else) is completed. */
+    public const KEY_EMAIL_NOTIFY_RUN_COMPLETED = 'email_notify_run_completed';
 
     /**
      * @return array<string, mixed>
@@ -77,6 +81,12 @@ final class UserPreferences
             if ($theme !== null) {
                 $out[self::KEY_THEME] = $theme;
             }
+        }
+        if (array_key_exists(self::KEY_EMAIL_NOTIFY_RUN_ASSIGNED, $raw)) {
+            $out[self::KEY_EMAIL_NOTIFY_RUN_ASSIGNED] = self::toBool($raw[self::KEY_EMAIL_NOTIFY_RUN_ASSIGNED]);
+        }
+        if (array_key_exists(self::KEY_EMAIL_NOTIFY_RUN_COMPLETED, $raw)) {
+            $out[self::KEY_EMAIL_NOTIFY_RUN_COMPLETED] = self::toBool($raw[self::KEY_EMAIL_NOTIFY_RUN_COMPLETED]);
         }
 
         return $out;

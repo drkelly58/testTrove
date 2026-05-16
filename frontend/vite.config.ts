@@ -1,27 +1,47 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import path from 'path';
 
-export default defineConfig({
-  base: '/app/',
-  plugins: [vue()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, 'src'),
-    },
-  },
-  server: {
-    proxy: {
-      // Default matches typical Linux Apache (port 80). Homebrew httpd often uses 8080 — set in shell:
-      //   VITE_API_PROXY_TARGET=http://127.0.0.1:8080 npm run dev
-      '/api': {
-        target: process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1',
-        changeOrigin: true,
+/**
+ * Proxy `/api/*` → `http://127.0.0.1` (port 80) by default, matching earlier repo behavior / typical Apache setups.
+ * For `php -S …:8080`, set VITE_API_PROXY_TARGET or `frontend/.env.development`.
+ */
+const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1';
+
+export default defineConfig(({ mode }) => {
+  const envDir = path.resolve(__dirname);
+  const env = loadEnv(mode, envDir, '');
+  const shellTarget =
+    typeof process.env.VITE_API_PROXY_TARGET === 'string' && process.env.VITE_API_PROXY_TARGET.trim()
+      ? process.env.VITE_API_PROXY_TARGET.trim()
+      : '';
+  const fileTarget =
+    typeof env.VITE_API_PROXY_TARGET === 'string' && env.VITE_API_PROXY_TARGET.trim()
+      ? env.VITE_API_PROXY_TARGET.trim()
+      : '';
+
+  const apiProxyTarget =
+    shellTarget || fileTarget || DEFAULT_API_PROXY_TARGET;
+
+  return {
+    base: '/app/',
+    plugins: [vue()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, 'src'),
       },
     },
-  },
-  build: {
-    outDir: path.resolve(__dirname, '../public/app'),
-    emptyOutDir: true,
-  },
+    server: {
+      proxy: {
+        '/api': {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
+      },
+    },
+    build: {
+      outDir: path.resolve(__dirname, '../public/app'),
+      emptyOutDir: true,
+    },
+  };
 });

@@ -8,6 +8,8 @@ export type UserPreferences = {
   default_project_id?: number | null;
   run_overview_single_expand?: boolean;
   theme?: ThemeMode;
+  email_notify_run_assigned?: boolean;
+  email_notify_run_completed?: boolean;
 };
 
 const LOCAL_DEFAULT_PROJECT_KEY = 'testtrove.defaultProjectId' as const;
@@ -17,6 +19,10 @@ let serverBacked = false;
 let cached: UserPreferences = {};
 
 export const runOverviewSingleExpand = ref(true);
+
+export const emailNotifyRunAssigned = ref(false);
+
+export const emailNotifyRunCompleted = ref(false);
 
 function readLocalDefaultProjectId(): number | null {
   try {
@@ -86,6 +92,8 @@ function resolveTheme(prefs: UserPreferences): ThemeMode {
 
 function applyToUi(prefs: UserPreferences) {
   runOverviewSingleExpand.value = prefs.run_overview_single_expand ?? true;
+  emailNotifyRunAssigned.value = prefs.email_notify_run_assigned ?? false;
+  emailNotifyRunCompleted.value = prefs.email_notify_run_completed ?? false;
   applyTheme(resolveTheme(prefs));
 }
 
@@ -204,5 +212,35 @@ export function setThemePreference(mode: ThemeMode): void {
       });
   } else {
     writeStoredTheme(mode);
+  }
+}
+
+export function setEmailNotifyRunAssigned(value: boolean): void {
+  emailNotifyRunAssigned.value = value;
+  cached = { ...cached, email_notify_run_assigned: value };
+  if (serverBacked) {
+    void patchOnServer({ email_notify_run_assigned: value })
+      .then((merged) => {
+        cached = merged;
+        applyToUi(merged);
+      })
+      .catch(() => {
+        /* keep in-memory value */
+      });
+  }
+}
+
+export function setEmailNotifyRunCompleted(value: boolean): void {
+  emailNotifyRunCompleted.value = value;
+  cached = { ...cached, email_notify_run_completed: value };
+  if (serverBacked) {
+    void patchOnServer({ email_notify_run_completed: value })
+      .then((merged) => {
+        cached = merged;
+        applyToUi(merged);
+      })
+      .catch(() => {
+        /* keep in-memory value */
+      });
   }
 }

@@ -13,7 +13,29 @@ bootstrapThemeFromStorage();
 bootstrapDevPermissionsFromUrl();
 
 router.beforeEach(async (to) => {
-  const s = await loadAuthSession();
+  /** Skip session ping so this route can render offline guidance (avoids a guard loop). */
+  if (to.name === 'apiUnavailable') {
+    return true;
+  }
+
+  let s: Awaited<ReturnType<typeof loadAuthSession>>;
+  try {
+    s = await loadAuthSession();
+  } catch (e) {
+    console.warn('[TestTrove] /api/auth/session failed', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    try {
+      sessionStorage.setItem('testtrove.lastApiError', msg);
+    } catch {
+      /* unavailable (private mode / disabled storage) */
+    }
+    return {
+      name: 'apiUnavailable',
+      replace: true,
+      query: to.fullPath && to.meta?.public !== true ? { attempted: to.fullPath } : {},
+    };
+  }
+
   const isPublic = Boolean((to.meta as { public?: boolean }).public);
   if (s.auth_required && !s.user && !isPublic) {
     return { name: 'login', query: { return_to: to.fullPath } };
@@ -44,7 +66,11 @@ router.afterEach((to, from) => {
 async function boot() {
   const app = createApp(App);
   app.use(router);
-  await router.isReady();
+  try {
+    await router.isReady();
+  } catch (e) {
+    console.error('[TestTrove] Router did not settle; mounting anyway.', e);
+  }
   app.mount('#app');
 }
 

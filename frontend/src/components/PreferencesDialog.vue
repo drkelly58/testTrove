@@ -3,11 +3,16 @@ import { computed, inject, ref } from 'vue';
 import DataImportExport from '@/components/DataImportExport.vue';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
 import { theme, type ThemeMode } from '@/theme';
+import { emailNotificationsAvailable } from '@/authSession';
 import {
   preferencesAreServerBacked,
   runOverviewSingleExpand,
+  emailNotifyRunAssigned,
+  emailNotifyRunCompleted,
   setRunOverviewSingleExpand,
   setThemePreference,
+  setEmailNotifyRunAssigned,
+  setEmailNotifyRunCompleted,
 } from '@/userPreferences';
 
 defineProps<{
@@ -63,6 +68,16 @@ function onExpandModeChange(mode: 'single' | 'multiple') {
 
 function onThemePick(mode: ThemeMode) {
   setThemePreference(mode);
+}
+
+function onEmailAssignedChange(ev: Event) {
+  const t = ev.target as HTMLInputElement;
+  setEmailNotifyRunAssigned(t.checked);
+}
+
+function onEmailCompletedChange(ev: Event) {
+  const t = ev.target as HTMLInputElement;
+  setEmailNotifyRunCompleted(t.checked);
 }
 </script>
 
@@ -146,6 +161,32 @@ function onThemePick(mode: ThemeMode) {
                   </span>
                 </label>
               </div>
+            </fieldset>
+
+            <fieldset
+              v-if="preferencesAreServerBacked() && emailNotificationsAvailable"
+              class="prefs-fieldset"
+            >
+              <legend class="prefs-legend">Email notifications</legend>
+              <p class="prefs-help">
+                Requires outbound mail on the server. Choose which run updates to receive by email.
+              </p>
+              <label class="prefs-check">
+                <input
+                  type="checkbox"
+                  :checked="emailNotifyRunAssigned"
+                  @change="onEmailAssignedChange"
+                />
+                <span>When I'm assigned a test run</span>
+              </label>
+              <label class="prefs-check">
+                <input
+                  type="checkbox"
+                  :checked="emailNotifyRunCompleted"
+                  @change="onEmailCompletedChange"
+                />
+                <span>When a run I created (assigned to someone else) is completed</span>
+              </label>
             </fieldset>
 
             <fieldset class="prefs-fieldset">
@@ -337,6 +378,26 @@ function onThemePick(mode: ThemeMode) {
   margin: 0.35rem 0 0;
   font-size: 0.78rem;
   color: var(--danger);
+}
+
+.prefs-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.prefs-check:last-child {
+  margin-bottom: 0;
+}
+
+.prefs-check input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
 }
 
 .prefs-segmented {

@@ -8,12 +8,18 @@ declare(strict_types=1);
  * or: php scripts/smoke_patch_entities.php (with DB_PATH in env).
  */
 
+use App\Auth\AuthSettings;
 use App\Controllers\CaseController;
 use App\Controllers\ProjectController;
 use App\Controllers\RunController;
 use App\Controllers\SectionController;
 use App\Controllers\SuiteController;
 use App\Database;
+use App\Mail\MailSettings;
+use App\Services\AuthorizationService;
+use App\Services\MailService;
+use App\Services\ProjectScopeResolver;
+use App\Services\RunEmailNotifier;
 use Slim\Psr7\Factory\ResponseFactory;
 use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Factory\StreamFactory;
@@ -87,11 +93,18 @@ $readJson = static function ($response): array {
     return json_decode($response->getBody()->getContents(), true, 512, JSON_THROW_ON_ERROR);
 };
 
-$projects = new ProjectController($pdo);
-$suites = new SuiteController($pdo);
-$sections = new SectionController($pdo);
-$runs = new RunController($pdo);
-$casesCtl = new CaseController($pdo);
+$authSettings = AuthSettings::fromGlobals($_ENV);
+$authorization = new AuthorizationService($pdo, $authSettings);
+$projectScope = new ProjectScopeResolver($pdo);
+$mailSettings = MailSettings::fromEnv($_ENV);
+$mailService = new MailService($mailSettings);
+$runEmailNotifier = new RunEmailNotifier($pdo, $mailSettings, $mailService);
+
+$projects = new ProjectController($pdo, $authorization, $projectScope);
+$suites = new SuiteController($pdo, $authorization, $projectScope);
+$sections = new SectionController($pdo, $authorization, $projectScope);
+$runs = new RunController($pdo, $authorization, $projectScope, $runEmailNotifier);
+$casesCtl = new CaseController($pdo, $authorization, $projectScope);
 
 // a. Project rename + description clear -> NULL
 $req = $reqFactory->createServerRequest('PATCH', "/api/projects/{$projectId}")

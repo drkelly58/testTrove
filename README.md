@@ -101,13 +101,17 @@ npm install
 npm run dev
 ```
 
-Vite proxies `/api` to **`http://127.0.0.1`** by default (port 80). If your PHP stack listens elsewhere (e.g. `8080`):
+Vite proxies **`/api/*`** to **`http://127.0.0.1`** by default (**port 80** — usual Apache / local stack). Use **`php -S`** instead? Point the proxy there:
 
 ```bash
 VITE_API_PROXY_TARGET=http://127.0.0.1:8080 npm run dev
 ```
 
-Open the URL Vite prints (typically `http://localhost:5173`). The app is mounted under **`/app/`** (see `vite.config.ts` `base: '/app/'`).
+You can also set **`frontend/.env.development`** (`VITE_API_PROXY_TARGET`); copy **`frontend/.env.development.example`** as a starter.
+
+Open **`http://localhost:5173/app/`** (same path prefix as production; plain **`http://localhost:5173/`** is not guaranteed to resolve the SPA with this `base`).
+
+If you see **`/app/api-unavailable`**, **`/api/auth/session`** isn’t usable JSON—the proxy target may only be serving SPA HTML (**wrong port / wrong vhost**), or SQLite bootstrap failed (**`storage/`** not writable when running **`php -S`**). See **`php -S`** above and **`VITE_API_PROXY_TARGET`**.
 
 ### 3. PHP built-in server (optional)
 
@@ -201,8 +205,8 @@ The frontend assumes deployment under **`/app/`**. Changing that requires updati
 
 When no OAuth/local auth is configured, you can append query parameters so the SPA sends dev permission hints on every `/api/*` request, for example:
 
-- `http://localhost:5173/?role=tester&projects=1,2,3`
-- `http://localhost:5173/?role=admin`
+- `http://localhost:5173/app/?role=tester&projects=1,2,3`
+- `http://localhost:5173/app/?role=admin`
 
 Clear with `?role=off` or the in-app banner control (see `DevPermissionMiddleware` and frontend `devPermissions`).
 
@@ -223,7 +227,8 @@ Import/export with `format=xlsx` is intentionally **not implemented**; the API r
 | SQLite “not writable” | Directory ownership/permissions for `DB_PATH`; web server user must create/update `.sqlite` and WAL files |
 | OAuth redirect mismatch | `APP_BASE_URL` matches registered redirect URIs (`{APP_BASE_URL}/api/auth/callback/{provider}`) |
 | CORS / cookie login | `CORS_ORIGIN` matches the SPA origin exactly; requests use credentials (`fetch` with `credentials: 'include'` in `frontend/src/api.ts`) |
-| Blank `/app/` after deploy | Run `npm run build`; confirm `public/app/index.html` exists |
+| SPA blank/black in **`npm run dev`** | Proxy default **`http://127.0.0.1`** (Apache :80): bad target if `/api` returns HTML—set **`VITE_API_PROXY_TARGET`**. **`php -S`** on **8080** needs **`http://127.0.0.1:8080`**. **`php -S`** as your user + **`storage/`** owned by **`www-data`** → SQLite errors—**`chown`/`chmod`** **`storage/`**. Visit **`http://localhost:5173/app/`**. |
+| Blank **`/app/`** after deploy | Run **`npm run build`**; confirm **`public/app/index.html`** exists; Apache/nginx must route **`/api/*`** to **`index.php`**, not the SPA fallback |
 | API 404 on Apache | `mod_rewrite`, `AllowOverride`, and `RewriteBase` if the app lives in a subdirectory |
 
 ---

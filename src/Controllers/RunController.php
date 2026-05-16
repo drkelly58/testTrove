@@ -11,6 +11,7 @@ use App\JsonResponse;
 use App\Services\AuthorizationService;
 use App\Services\CaseExchangeService;
 use App\Services\ProjectScopeResolver;
+use App\Services\RunEmailNotifier;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -37,6 +38,7 @@ final class RunController
         private readonly PDO $pdo,
         AuthorizationService $authorization,
         ProjectScopeResolver $projectScope,
+        private readonly RunEmailNotifier $runEmailNotifier,
     ) {
         $this->initAuthorization($authorization, $projectScope);
     }
@@ -207,6 +209,10 @@ final class RunController
             return JsonResponse::error($msg, 500);
         }
 
+        if ($assignedTo !== null) {
+            $this->runEmailNotifier->notifyRunAssigned($runId, $assignedTo, $this->runCreatorUserId());
+        }
+
         return JsonResponse::encode(
             $response,
             [
@@ -327,6 +333,10 @@ final class RunController
             return JsonResponse::error($msg, 500);
         }
 
+        if ($assignedTo !== null) {
+            $this->runEmailNotifier->notifyRunAssigned($runId, $assignedTo, $this->runCreatorUserId());
+        }
+
         return JsonResponse::encode(
             $response,
             [
@@ -422,6 +432,7 @@ final class RunController
             return JsonResponse::error('run not found', 404);
         }
         $projectId = (int) $runRow['project_id'];
+        $previousAssigneeId = self::nullableIntColumn($runRow['assigned_to_user_id'] ?? null);
 
         try {
             $data = JsonRequestBody::decodeAssoc($request);
@@ -431,6 +442,8 @@ final class RunController
 
         $sets = [];
         $params = ['id' => $runId];
+        $patchedAssigneeId = null;
+        $assignmentWasPatched = false;
         if (array_key_exists('assigned_to_user_id', $data)) {
             if ($denied = $this->authorizeRunAssign($projectId)) {
                 return $denied;
@@ -442,6 +455,8 @@ final class RunController
             if ($err = $this->validateRunAssignee($projectId, $parsed['user_id'])) {
                 return $err;
             }
+            $assignmentWasPatched = true;
+            $patchedAssigneeId = $parsed['user_id'];
             $sets[] = 'assigned_to_user_id = :assigned_to';
             $params['assigned_to'] = $parsed['user_id'];
         }
@@ -478,6 +493,13 @@ final class RunController
         $row = $this->fetchRunRow($runId);
         if ($row === null) {
             return JsonResponse::error('run not found', 404);
+        }
+
+        if ($assignmentWasPatched
+            && $patchedAssigneeId !== null
+            && $patchedAssigneeId !== $previousAssigneeId) {
+            $actor = $this->runCreatorUserId();
+            $this->runEmailNotifier->notifyRunAssigned($runId, $patchedAssigneeId, $actor);
         }
 
         return JsonResponse::encode($response, ['data' => $row]);
@@ -586,7 +608,17 @@ final class RunController
 
         $shotsOut = self::normalizeScreenshotsList($screenshotsJson);
 
-        $runState = $this->syncRunAutoCompleteState($runId);
+        $sync = $this->syncRunAutoCompleteState($runId);
+        $runState = $sync['state'];
+
+        $executorUserId = null;
+        $auth = $this->authorizationService();
+        if ($auth->isAuthEnforced()) {
+            $executorUserId = $auth->requireUserId();
+        }
+        if ($sync['became_complete']) {
+            $this->runEmailNotifier->notifyAssignedRunCompleted($runId, $executorUserId);
+        }
 
         return JsonResponse::encode($response, [
             'data' => [
@@ -606,18 +638,20 @@ final class RunController
     /**
      * When every item is pass or fail, mark the run complete; reopen if a non-terminal result remains.
      * Does not change locked or archived runs.
+     *
+     * @return array{state: string, became_complete: bool}
      */
-    private function syncRunAutoCompleteState(int $runId): string
+    private function syncRunAutoCompleteState(int $runId): array
     {
         $st = $this->pdo->prepare('SELECT state FROM test_runs WHERE id = :id LIMIT 1');
         $st->execute(['id' => $runId]);
         $curState = $st->fetchColumn();
         if ($curState === false) {
-            return 'open';
+            return ['state' => 'open', 'became_complete' => false];
         }
         $curState = (string) $curState;
         if (!in_array($curState, ['open', 'complete'], true)) {
-            return $curState;
+            return ['state' => $curState, 'became_complete' => false];
         }
 
         $total = (int) $this->scalar(
@@ -641,7 +675,9 @@ final class RunController
             $upd->execute(['state' => $newState, 'id' => $runId]);
         }
 
-        return $newState;
+        $becameComplete = $curState === 'open' && $newState === 'complete';
+
+        return ['state' => $newState, 'became_complete' => $becameComplete];
     }
 
     /**
