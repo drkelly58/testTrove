@@ -28,13 +28,50 @@ use Slim\Handlers\ErrorHandler;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-// When the host sends non-API requests to index.php (DirectoryIndex or broken .htaccess), serve the Vue SPA.
+/**
+ * SPA shim vs Slim: classify API before any Location: /app/ redirects.
+ * Rewrite /api → index.php can expose PATH_INFO-only routes or REQUEST_URI quirks.
+ */
+function tt_request_targets_api(string $requestPath): bool
+{
+    $pathLower = strtolower($requestPath);
+    if ($pathLower === '/api' || str_starts_with($pathLower, '/api/')) {
+        return true;
+    }
+
+    $pathInfo = $_SERVER['PATH_INFO'] ?? '';
+    if (is_string($pathInfo) && $pathInfo !== '') {
+        $pi = strtolower($pathInfo);
+        if ($pi === '/api' || str_starts_with($pi, '/api/')) {
+            return true;
+        }
+    }
+
+    if (preg_match('#/index\\.php/(?:api(?:/|$))#i', $requestPath)) {
+        return true;
+    }
+
+    $rawLower = strtolower(urldecode($_SERVER['REQUEST_URI'] ?? ''));
+    if ($rawLower !== '') {
+        if (str_contains($rawLower, '/api/') || preg_match('#/api(?:/|\\?|\\#|$)#', $rawLower)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// When non-API requests hit index.php, serve redirect or SPA shell.
 $requestPath = urldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
-$isSiteRoot = in_array($requestPath, ['/', '', '/index.php'], true);
-if (!str_starts_with($requestPath, '/api')) {
+if (!tt_request_targets_api($requestPath)) {
     $spaIndex = __DIR__ . '/app/index.html';
     if (is_file($spaIndex)) {
-        if ($isSiteRoot) {
+        if ($requestPath === '/' || $requestPath === '') {
+            header('Location: /app/', true, 302);
+            exit;
+        }
+        /** Do not lump /index.php with / unless we know this isn't /api rewritten into index.php. */
+        if ($requestPath === '/index.php') {
             header('Location: /app/', true, 302);
             exit;
         }

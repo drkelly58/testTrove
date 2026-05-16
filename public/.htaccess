@@ -18,12 +18,14 @@ DirectoryIndex index.html index.php
   Header set Cache-Control "public, max-age=31536000, immutable" env=tt_hashed_asset
 </IfModule>
 
-# JSON API
-RewriteCond %{REQUEST_URI} ^/api/
-RewriteRule ^ index.php [QSA,L]
+# JSON API (/api inside REQUEST_URI covers subdirectories and survives internal rewrite quirks)
+RewriteCond %{REQUEST_URI} /api(?:/|$) [NC]
+RewriteRule ^ index.php [QSA,L,END]
 
 # Site root -> SPA (after `npm run build` from /frontend; outDir ../public/app, base /app/)
 RewriteRule ^$ /app/ [R=302,L]
+# After rewriting /api → index.php Apache may revisit rules with uri /index.php; never redirect API.
+RewriteCond %{REQUEST_URI} !/api(?:/|$) [NC]
 RewriteRule ^index\.php$ /app/ [R=302,L]
 RewriteRule ^app$ /app/ [R=302,L]
 
