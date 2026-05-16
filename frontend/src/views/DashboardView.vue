@@ -27,6 +27,8 @@ const showWorkspace = computed(() => !isViewerOnlyOnAllProjects(session.value));
 const showUsers = computed(() => canManageUsers(session.value));
 const primaryHref = computed(() => defaultLandingPath(session.value));
 const primaryLabel = computed(() => (primaryHref.value === '/runs' ? 'Open runs' : 'Open workspace'));
+const showWorkspaceShortcut = computed(() => showWorkspace.value && primaryHref.value !== '/');
+const showRunsShortcut = computed(() => primaryHref.value !== '/runs');
 
 const projectName = computed(() => {
   const pid = projectCtx.projectId;
@@ -326,13 +328,13 @@ watch(session, async (s) => {
           <span class="tile-hint">Continue where you usually work — {{ userLabel }}.</span>
         </RouterLink>
       </li>
-      <li v-if="showWorkspace">
+      <li v-if="showWorkspaceShortcut">
         <RouterLink class="tile" to="/">
           <span class="tile-title">Workspace</span>
           <span class="tile-hint">Suites, sections, and cases for the selected project.</span>
         </RouterLink>
       </li>
-      <li>
+      <li v-if="showRunsShortcut">
         <RouterLink class="tile" to="/runs">
           <span class="tile-title">Runs</span>
           <span class="tile-hint">Execution hub and run history.</span>
