@@ -20,8 +20,22 @@ deploy_repo_root() {
     cd "$script_dir/.." && pwd
 }
 
+# Remote shell for rsync over SSH (DEPLOY_RSYNC_RSH or DEPLOY_SSH_PORT in deploy.env).
+deploy_rsync_ssh_shell() {
+    if [[ -n "${DEPLOY_RSYNC_RSH:-}" ]]; then
+        return 0
+    fi
+    if [[ -n "${DEPLOY_SSH_PORT:-}" ]]; then
+        DEPLOY_RSYNC_RSH="ssh -p ${DEPLOY_SSH_PORT}"
+    fi
+}
+
 deploy_rsync_opts() {
     DEPLOY_RSYNC_OPTS=(-a -z --human-readable)
+    deploy_rsync_ssh_shell
+    if [[ -n "${DEPLOY_RSYNC_RSH:-}" ]]; then
+        DEPLOY_RSYNC_OPTS+=(-e "$DEPLOY_RSYNC_RSH")
+    fi
     if [[ "${DEPLOY_DRY_RUN:-}" == "1" ]]; then
         DEPLOY_RSYNC_OPTS+=(--dry-run -n -v)
     fi
@@ -52,21 +66,40 @@ deploy_rsync_excludes() {
     fi
 }
 
+# Resolve built web root under an app root.
+# Dev tree: public/ after `npm run build`. Shared-host promote source: public_html/ (DEPLOY_WEB_DIR).
+deploy_resolve_src_web() {
+    local src_root="$1"
+    local web_dir="${DEPLOY_WEB_DIR:-public}"
+    if [[ -d "$src_root/public" ]]; then
+        echo "$src_root/public"
+        return 0
+    fi
+    if [[ -d "$src_root/$web_dir" ]]; then
+        echo "$src_root/$web_dir"
+        return 0
+    fi
+    echo "Missing built web root under $src_root (expected public/ or $web_dir/)." >&2
+    if [[ "$web_dir" == "public" ]]; then
+        echo "From the repo, run: cd frontend && npm run build" >&2
+    else
+        echo "On the server, promote from staging that already has $web_dir/ (no npm on promote)." >&2
+    fi
+    return 1
+}
+
 # Sync application code from SRC_ROOT to DEST (user@host:path or /local/path).
-# Local repo uses public/; remote may use DEPLOY_WEB_DIR (e.g. public_html).
+# Local repo uses public/; remote document root is often DEPLOY_WEB_DIR (e.g. public_html).
 deploy_sync_release() {
     local src_root="$1"
     local dest_root="$2"
     local web_dir="${DEPLOY_WEB_DIR:-public}"
-    local src_web="$src_root/public"
+    local src_web
+    src_web="$(deploy_resolve_src_web "$src_root")" || return 1
     local dest_web="$dest_root/$web_dir"
 
     if [[ ! -d "$src_root/src" ]]; then
         echo "Not an application root (missing src/): $src_root" >&2
-        return 1
-    fi
-    if [[ ! -d "$src_web" ]]; then
-        echo "Missing built web root at $src_web — run npm run build in frontend/ first." >&2
         return 1
     fi
 

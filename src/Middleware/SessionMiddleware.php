@@ -27,11 +27,18 @@ final class SessionMiddleware implements MiddlewareInterface
                 session_save_path($dir);
             }
 
-            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])
-                    && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+            $https = $this->requestIsHttps();
 
-            session_name('TTSESSID');
+            ini_set('session.use_strict_mode', '1');
+            ini_set('session.use_only_cookies', '1');
+
+            session_name('TTSESSID2');
+
+            $headerSid = trim($request->getHeaderLine('X-TestTrove-Session'));
+            if ($headerSid !== '' && preg_match('/^[a-zA-Z0-9,-]{16,128}$/', $headerSid)) {
+                session_id($headerSid);
+            }
+
             session_set_cookie_params([
                 'lifetime' => 0,
                 'path' => '/',
@@ -43,5 +50,29 @@ final class SessionMiddleware implements MiddlewareInterface
         }
 
         return $handler->handle($request);
+    }
+
+    /** Match cookie `Secure` to how users reach the app (APP_BASE_URL) and reverse-proxy headers. */
+    private function requestIsHttps(): bool
+    {
+        $base = trim((string) ($_ENV['APP_BASE_URL'] ?? ''));
+        if ($base !== '') {
+            return str_starts_with(strtolower($base), 'https://');
+        }
+
+        if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+            return true;
+        }
+        if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])
+            && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {
+            return true;
+        }
+        if (!empty($_SERVER['HTTP_X_FORWARDED_SSL'])
+            && strtolower((string) $_SERVER['HTTP_X_FORWARDED_SSL']) === 'on') {
+            return true;
+        }
+        $scheme = strtolower((string) ($_SERVER['REQUEST_SCHEME'] ?? ''));
+
+        return $scheme === 'https';
     }
 }

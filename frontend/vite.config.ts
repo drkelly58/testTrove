@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import path from 'path';
+import { resolveBuildMeta } from './buildMeta';
 
 /**
  * Proxy `/api/*` → `http://127.0.0.1` (port 80) by default, matching earlier repo behavior / typical Apache setups.
@@ -9,6 +10,14 @@ import path from 'path';
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1';
 
 export default defineConfig(({ mode }) => {
+  const buildMeta = resolveBuildMeta();
+  if (!process.env.VITE_APP_BUILD_ID?.trim()) {
+    process.env.VITE_APP_BUILD_ID = buildMeta.buildId;
+  }
+  if (!process.env.VITE_APP_BUILD_TIME?.trim()) {
+    process.env.VITE_APP_BUILD_TIME = buildMeta.buildTime;
+  }
+
   const envDir = path.resolve(__dirname);
   const env = loadEnv(mode, envDir, '');
   const shellTarget =

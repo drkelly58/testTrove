@@ -4,6 +4,7 @@ import {
   loadStoredDevPermissions,
   type DevPermissions,
 } from '@/devPermissions';
+import { sessionKeyHeaders, storeSessionKey } from '@/sessionKey';
 import { clearUserPreferencesState, syncPreferencesFromAuthUser } from '@/userPreferences';
 import type { UserPreferences } from '@/userPreferences';
 
@@ -44,6 +45,9 @@ export const emailNotificationsAvailable = ref(false);
 
 let cached: AuthSessionPayload | null = null;
 
+/** Bumped when cache is cleared or a new load starts; stale in-flight responses must not overwrite the cache. */
+let sessionLoadSeq = 0;
+
 /** JSON API error payloads (Slim `{ error }` or bootstrap `{ error, message }`). */
 function messageFromKnownJsonEnvelope(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
@@ -62,8 +66,12 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
   if (!force && cached) {
     return cached;
   }
-  const devQs = devPermissionsQueryForSession();
-  const res = await fetch(`${base}/api/auth/session${devQs}`, { credentials: 'include' });
+  const seq = ++sessionLoadSeq;
+  const res = await fetch(sessionRequestUrl(force), {
+    credentials: 'include',
+    cache: 'no-store',
+    headers: sessionKeyHeaders({ Accept: 'application/json' }),
+  });
   const text = await res.text();
   /** When Vite proxies /api to a host that wrongly serves SPA HTML (often after a redirect to /app/), JSON.parse blows up and Vue never mounts unless callers handle errors. */
   const trimmed = text.trim();
@@ -84,6 +92,12 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
 
   /** Non-success: always surface `{ error }` / `{ message }` from JSON when present (e.g. bootstrap 503). */
   if (!res.ok) {
+    if (seq !== sessionLoadSeq) {
+      if (cached) {
+        return cached;
+      }
+      return loadAuthSession(true);
+    }
     throw new Error(
       envelopeErr ?? (res.statusText?.trim() || `Auth session failed (HTTP ${res.status})`),
     );
@@ -100,7 +114,7 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
     }
     throw new Error('/api/auth/session response missing data envelope');
   }
-  cached = applyDevPermissionsToSession({
+  const next = applyDevPermissionsToSession({
     ...j.data as AuthSessionPayload,
     local_login_enabled: j.data.local_login_enabled ?? false,
     is_admin: j.data.is_admin ?? false,
@@ -109,6 +123,17 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
     dev_permissions: j.data.dev_permissions ?? null,
     email_notifications_available: j.data.email_notifications_available ?? false,
   });
+  if (seq !== sessionLoadSeq) {
+    if (cached) {
+      return cached;
+    }
+    return loadAuthSession(true);
+  }
+  /** Keep a signed-in cache when /api/auth/session is anonymous (cookie not sent yet or stale id). */
+  if (cached?.user && !next.user) {
+    return cached;
+  }
+  cached = next;
   emailNotificationsAvailable.value = cached.email_notifications_available ?? false;
   if (cached.user) {
     syncPreferencesFromAuthUser(cached.user);
@@ -119,23 +144,53 @@ export async function loadAuthSession(force = false): Promise<AuthSessionPayload
 }
 
 export function clearAuthSessionCache(): void {
+  sessionLoadSeq += 1;
   cached = null;
   emailNotificationsAvailable.value = false;
   clearUserPreferencesState();
 }
 
-function devPermissionsQueryForSession(): string {
-  const dev = loadStoredDevPermissions();
-  if (!dev) {
-    return '';
-  }
+/** Current in-memory session (for syncing Vue refs after login). */
+export function peekAuthSessionCache(): AuthSessionPayload | null {
+  return cached;
+}
+
+/** Apply a successful password login to the in-memory session (router must not bounce back to /login). */
+export function seedAuthSessionAfterLogin(
+  user: AuthUser,
+  preserved: AuthSessionPayload | null = cached,
+): AuthSessionPayload {
+  sessionLoadSeq += 1;
+  cached = {
+    auth_required: true,
+    local_login_enabled: preserved?.local_login_enabled ?? true,
+    providers: preserved?.providers ?? [],
+    user,
+    is_admin: user.role === 'admin',
+    project_roles: preserved?.project_roles ?? {},
+    has_assigned_open_runs: preserved?.has_assigned_open_runs ?? false,
+    dev_permissions: null,
+    email_notifications_available: preserved?.email_notifications_available ?? false,
+  };
+  emailNotificationsAvailable.value = cached.email_notifications_available ?? false;
+  syncPreferencesFromAuthUser(user);
+  return cached;
+}
+
+function sessionRequestUrl(bustCache: boolean): string {
   const params = new URLSearchParams();
-  params.set('role', dev.role);
-  if (dev.role !== 'admin' && dev.projects.length > 0) {
-    params.set('projects', dev.projects.join(','));
+  const dev = loadStoredDevPermissions();
+  if (dev) {
+    params.set('role', dev.role);
+    if (dev.role !== 'admin' && dev.projects.length > 0) {
+      params.set('projects', dev.projects.join(','));
+    }
+  }
+  if (bustCache) {
+    params.set('_', String(Date.now()));
   }
   const s = params.toString();
-  return s === '' ? '' : `?${s}`;
+  return `${base}/api/auth/session${s === '' ? '' : `?${s}`}`;
 }
 
 function applyDevPermissionsToSession(data: AuthSessionPayload): AuthSessionPayload {
@@ -171,6 +226,7 @@ export async function loginWithPassword(email: string, password: string): Promis
   const res = await fetch(`${base}/api/auth/login/local`, {
     method: 'POST',
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
@@ -178,7 +234,7 @@ export async function loginWithPassword(email: string, password: string): Promis
     body: JSON.stringify({ email, password }),
   });
   const text = await res.text();
-  let body: { error?: string; data?: { user: AuthUser } };
+  let body: { error?: string; data?: { user: AuthUser; session_key?: string } };
   try {
     body = JSON.parse(text) as typeof body;
   } catch {
@@ -190,8 +246,6 @@ export async function loginWithPassword(email: string, password: string): Promis
   if (!body.data?.user) {
     throw new Error('Sign-in response missing user');
   }
-  clearAuthSessionCache();
-  const user = body.data.user;
-  syncPreferencesFromAuthUser(user);
-  return user;
+  storeSessionKey(body.data.session_key);
+  return seedAuthSessionAfterLogin(body.data.user);
 }

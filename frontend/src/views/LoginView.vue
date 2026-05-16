@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { refreshAuthSession } from '@/authContext';
-import { loadAuthSession, loginWithPassword, type AuthSessionPayload } from '@/authSession';
+import { authSession, refreshAuthSession } from '@/authContext';
+import { loginWithPassword, type AuthSessionPayload } from '@/authSession';
 import { defaultLandingPath } from '@/permissions';
+import { resetTestTroveClientData } from '@/siteReset';
 
 const route = useRoute();
 const router = useRouter();
-const session = ref<AuthSessionPayload | null>(null);
 const loadError = ref<string | null>(null);
 const email = ref('');
 const password = ref('');
@@ -46,13 +46,17 @@ const errHint = computed(() => {
   return 'Sign-in failed. Please try again or contact support.';
 });
 
+const session = computed(() => authSession.value);
 const showOAuth = computed(() => (session.value?.providers.length ?? 0) > 0);
 const showLocal = computed(() => session.value?.local_login_enabled === true);
 
 onMounted(() => {
+  if (authSession.value) {
+    return;
+  }
   void (async () => {
     try {
-      session.value = await loadAuthSession(true);
+      await refreshAuthSession();
     } catch (e) {
       loadError.value = e instanceof Error ? e.message : 'Could not load sign-in options';
     }
@@ -74,6 +78,11 @@ function returnPath(session: AuthSessionPayload | null): string {
   return safe;
 }
 
+function resetSiteData() {
+  resetTestTroveClientData();
+  window.location.href = '/app/login';
+}
+
 async function submitLocal(ev: Event) {
   ev.preventDefault();
   formError.value = null;
@@ -81,6 +90,11 @@ async function submitLocal(ev: Event) {
   try {
     await loginWithPassword(email.value.trim(), password.value);
     const s = await refreshAuthSession();
+    if (!s?.user) {
+      formError.value =
+        'Signed in but the session could not be confirmed. Clear cookies for this site and try again.';
+      return;
+    }
     await router.push(returnPath(s));
   } catch (e) {
     formError.value = e instanceof Error ? e.message : 'Sign-in failed';
@@ -148,6 +162,13 @@ async function submitLocal(ev: Event) {
         </ul>
 
         <p v-if="showOAuth" class="hint oauth-hint">External providers redirect away from this page, then return here.</p>
+
+        <p class="reset-hint">
+          Still stuck after clearing cookies?
+          <button type="button" class="reset-link" @click="resetSiteData">Reset site data</button>
+          (also clear cookies for this host in browser settings), then reload
+          <code>http://staging.testtrove.lk638.us/app/</code>.
+        </p>
       </div>
     </template>
   </div>
@@ -210,6 +231,30 @@ async function submitLocal(ev: Event) {
 
 .oauth-hint {
   margin: 0.85rem 0 0;
+}
+
+.reset-hint {
+  margin: 1rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.reset-hint code {
+  font-size: 0.78em;
+}
+
+.reset-link {
+  margin: 0 0.15rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent, #7b61ff);
+  font: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .local-form {

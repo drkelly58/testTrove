@@ -101,10 +101,16 @@ final class AuthController
             return JsonResponse::error('Invalid email or password', 401);
         }
 
+        // Do not call session_regenerate_id() here: PHP would emit a second Set-Cookie header
+        // (one at session_start, one at regenerate) and some browsers keep the empty session id.
         $_SESSION['user_id'] = $user['id'];
-        session_regenerate_id(true);
 
-        return JsonResponse::encode($response, ['data' => ['user' => $user]]);
+        return JsonResponse::encode($response, [
+            'data' => [
+                'user' => $user,
+                'session_key' => session_id(),
+            ],
+        ]);
     }
 
     public function patchPreferences(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface

@@ -15,6 +15,8 @@ Usage: scripts/deploy-to-staging.sh [--dry-run]
 Builds the SPA, runs composer install --no-dev (unless skipped), and rsyncs
 to DEPLOY_STAGING_TARGET. Does not upload .env or storage/.
 
+For a non-default SSH port, set DEPLOY_SSH_PORT (or DEPLOY_RSYNC_RSH) in deploy.env.
+
 EOF
 }
 
@@ -38,6 +40,11 @@ cd "$ROOT"
 
 if [[ "${DEPLOY_SKIP_BUILD:-}" != "1" ]]; then
     echo "→ Building frontend (npm run build)"
+    tag_at_head="$(git tag --points-at HEAD 2>/dev/null | head -1 || true)"
+    if [[ -n "$tag_at_head" ]]; then
+        export VITE_APP_BUILD_ID="$tag_at_head"
+    fi
+    export VITE_APP_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     (cd frontend && npm run build)
 fi
 

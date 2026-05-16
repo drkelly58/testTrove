@@ -1,5 +1,11 @@
 import { ref } from 'vue';
-import { clearAuthSessionCache, loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import {
+  clearAuthSessionCache,
+  loadAuthSession,
+  peekAuthSessionCache,
+  type AuthSessionPayload,
+} from '@/authSession';
+import { storeSessionKey } from '@/sessionKey';
 import {
   projectId,
   projects,
@@ -22,6 +28,7 @@ function idleProjectsWorkspace(): void {
 }
 
 export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
+  const signedInBefore = authSession.value?.user ?? peekAuthSessionCache()?.user ?? null;
   try {
     const s = await loadAuthSession(true);
     authSession.value = s;
@@ -32,6 +39,10 @@ export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
     }
     return s;
   } catch {
+    if (signedInBefore) {
+      authSession.value = peekAuthSessionCache();
+      return authSession.value;
+    }
     authSession.value = null;
     idleProjectsWorkspace();
     return null;
@@ -40,6 +51,7 @@ export async function refreshAuthSession(): Promise<AuthSessionPayload | null> {
 
 export function clearAuthSessionState(): void {
   clearAuthSessionCache();
+  storeSessionKey(null);
   authSession.value = null;
   idleProjectsWorkspace();
 }

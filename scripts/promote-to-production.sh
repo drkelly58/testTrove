@@ -13,7 +13,8 @@ usage() {
     cat <<'EOF'
 Usage: scripts/promote-to-production.sh [--dry-run]
 
-Rsyncs from DEPLOY_STAGING_ROOT to DEPLOY_PRODUCTION_ROOT (local paths).
+Rsyncs from DEPLOY_STAGING_ROOT to DEPLOY_PRODUCTION_ROOT (local paths on the server).
+Does not run npm or composer — staging must already have DEPLOY_WEB_DIR/ (e.g. public_html/).
 Environment-specific files (.env, storage/) on production are not modified.
 
 EOF

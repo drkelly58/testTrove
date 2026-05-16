@@ -1,6 +1,6 @@
 import { createApp } from 'vue';
 import App from './App.vue';
-import { refreshAuthSession } from './authContext';
+import { authSession, refreshAuthSession } from './authContext';
 import { bootstrapDevPermissionsFromUrl } from './devPermissions';
 import { loadAuthSession } from './authSession';
 import { canManageUsers, defaultLandingPath } from './permissions';
@@ -21,6 +21,7 @@ router.beforeEach(async (to) => {
   let s: Awaited<ReturnType<typeof loadAuthSession>>;
   try {
     s = await loadAuthSession();
+    authSession.value = s;
   } catch (e) {
     console.warn('[TestTrove] /api/auth/session failed', e);
     const msg = e instanceof Error ? e.message : String(e);

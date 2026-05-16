@@ -1,14 +1,21 @@
 import { appendDevPermissionsToUrl, loadStoredDevPermissions } from '@/devPermissions';
+import { sessionKeyHeaders } from '@/sessionKey';
 
 const base = '';
 
-/** Include session cookie for OAuth-backed API authentication. */
+/** Session cookie plus optional X-TestTrove-Session when cookies are blocked in the browser profile. */
 export function apiFetch(input: string | URL, init?: RequestInit): Promise<Response> {
   let url = typeof input === 'string' ? input : input.toString();
   if (url.startsWith('/api/')) {
     url = appendDevPermissionsToUrl(url, loadStoredDevPermissions());
   }
-  return fetch(url, { credentials: 'include', ...init });
+  const headers = new Headers(init?.headers);
+  for (const [k, v] of Object.entries(sessionKeyHeaders())) {
+    if (!headers.has(k)) {
+      headers.set(k, v);
+    }
+  }
+  return fetch(url, { ...init, credentials: 'include', cache: 'no-store', headers });
 }
 
 /** Ask for JSON responses (Slim error handler) and send JSON bodies. */

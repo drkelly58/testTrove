@@ -14,6 +14,7 @@ import {
   setEmailNotifyRunAssigned,
   setEmailNotifyRunCompleted,
 } from '@/userPreferences';
+import { buildLabel, buildTitle } from '@/buildInfo';
 
 defineProps<{
   modelValue: boolean;
@@ -222,6 +223,7 @@ function onEmailCompletedChange(ev: Event) {
         </div>
 
         <footer class="prefs-foot">
+          <p class="prefs-build" :title="buildTitle">{{ buildLabel }}</p>
           <button type="button" class="btn primary" @click="close">Done</button>
         </footer>
       </section>
@@ -530,12 +532,22 @@ function onEmailCompletedChange(ev: Event) {
 .prefs-foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel-2) 70%, transparent);
   border-radius: 0 0 12px 12px;
+}
+
+.prefs-build {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
 }
 
 .btn {
