@@ -13,16 +13,28 @@ use PHPMailer\PHPMailer\PHPMailer;
  */
 final class MailService
 {
+    private ?string $lastError = null;
+
     public function __construct(private readonly MailSettings $settings)
     {
     }
 
+    public function getLastError(): string
+    {
+        return $this->lastError ?? '';
+    }
+
     public function send(string $toEmail, string $subject, string $plainBody, ?string $htmlBody = null): bool
     {
+        $this->lastError = null;
         if (!$this->settings->isEnabled()) {
+            $this->lastError = 'Mail is not enabled (check MAIL_ENABLED, MAIL_FROM, and MAIL_TRANSPORT / MAIL_SMTP_HOST).';
+
             return false;
         }
         if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+            $this->lastError = 'Invalid recipient email address.';
+
             return false;
         }
 
@@ -63,6 +75,7 @@ final class MailService
 
             return $mail->send();
         } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
             error_log('MailService: ' . $e->getMessage());
 
             return false;

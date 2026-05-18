@@ -163,7 +163,9 @@ Run notification email is **off by default**. The server must have outbound mail
    - **`MAIL_TRANSPORT=php`** — PHP `mail()` (host must allow outbound mail from PHP).
    - **`MAIL_TRANSPORT=smtp`** — set **`MAIL_SMTP_HOST`**, **`MAIL_SMTP_PORT`**, and optionally **`MAIL_SMTP_USER`**, **`MAIL_SMTP_PASSWORD`**, **`MAIL_SMTP_ENCRYPTION`** (`tls` or `ssl`).
 
-Set **`APP_BASE_URL`** to your public URL (scheme + host, no trailing slash) so links in emails match your deployment (same requirement as OAuth).
+Set **`APP_BASE_URL`** to your public URL (scheme + host, no trailing slash) so links in emails match your deployment (same requirement as OAuth). In production this should always be set; when it is missing, invite emails sent from the admin UI can still include a sign-in link derived from the browser request.
+
+**New-user invite emails** (when mail is enabled): global admins can create users with **Send invite email**; the dialog includes an editable intro paragraph (credentials and sign-in link are appended automatically). Override the instance defaults with optional **`MAIL_INVITE_SUBJECT`** and **`MAIL_INVITE_INTRO`** in `.env` (both support `{display_name}`).
 
 **What users can opt into** (stored in `users.preferences`):
 

@@ -126,7 +126,7 @@ final class OAuthUserProvisioner
     public function findById(int $id): ?array
     {
         $st = $this->pdo->prepare(
-            'SELECT id, email, display_name, role, picture_url, preferences FROM users WHERE id = :id'
+            'SELECT id, email, display_name, role, picture_url, preferences, must_change_password FROM users WHERE id = :id'
         );
         $st->execute(['id' => $id]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
@@ -143,7 +143,7 @@ final class OAuthUserProvisioner
     private function publicUserFromId(int $id): array
     {
         $st = $this->pdo->prepare(
-            'SELECT id, email, display_name, role, picture_url, preferences FROM users WHERE id = :id'
+            'SELECT id, email, display_name, role, picture_url, preferences, must_change_password FROM users WHERE id = :id'
         );
         $st->execute(['id' => $id]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
@@ -157,7 +157,7 @@ final class OAuthUserProvisioner
     /**
      * @param array<string, mixed> $r
      *
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>, must_change_password: bool}
      */
     private function publicUserFromRow(array $r): array
     {
@@ -168,6 +168,7 @@ final class OAuthUserProvisioner
             'role' => (string) $r['role'],
             'picture_url' => $r['picture_url'] !== null && $r['picture_url'] !== '' ? (string) $r['picture_url'] : null,
             'preferences' => UserPreferences::decode(isset($r['preferences']) ? (string) $r['preferences'] : null),
+            'must_change_password' => UserPasswordSupport::mustChangeFromRow($r),
         ];
     }
 }

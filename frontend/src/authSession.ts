@@ -17,6 +17,7 @@ export type AuthUser = {
   role: string;
   picture_url: string | null;
   preferences?: UserPreferences;
+  must_change_password?: boolean;
 };
 
 export type ProjectRole = 'member' | 'tester' | 'viewer';
@@ -248,4 +249,33 @@ export async function loginWithPassword(email: string, password: string): Promis
   }
   storeSessionKey(body.data.session_key);
   return seedAuthSessionAfterLogin(body.data.user);
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<AuthUser> {
+  const res = await fetch(`${base}/api/auth/change-password`, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...sessionKeyHeaders(),
+    },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  const text = await res.text();
+  let body: { error?: string; data?: { user: AuthUser } };
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    throw new Error(res.statusText || 'Could not change password');
+  }
+  if (!res.ok) {
+    throw new Error(body.error || res.statusText || 'Could not change password');
+  }
+  if (!body.data?.user) {
+    throw new Error('Password change response missing user');
+  }
+  seedAuthSessionAfterLogin(body.data.user);
+  return body.data.user;
 }

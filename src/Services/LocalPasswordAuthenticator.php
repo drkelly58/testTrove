@@ -17,7 +17,7 @@ final class LocalPasswordAuthenticator
     }
 
     /**
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}|null
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>, must_change_password: bool}|null
      */
     public function authenticate(string $email, string $password): ?array
     {
@@ -27,7 +27,7 @@ final class LocalPasswordAuthenticator
         }
 
         $stmt = $this->pdo->prepare(
-            'SELECT id, email, display_name, role, picture_url, preferences, password_hash, oauth_provider, oauth_subject
+            'SELECT id, email, display_name, role, picture_url, preferences, password_hash, oauth_provider, oauth_subject, must_change_password
              FROM users WHERE LOWER(TRIM(email)) = :e LIMIT 1'
         );
         $stmt->execute(['e' => $emailNorm]);
@@ -58,7 +58,7 @@ final class LocalPasswordAuthenticator
     /**
      * @param array<string, mixed> $row
      *
-     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>}
+     * @return array{id: int, email: string, display_name: string, role: string, picture_url: string|null, preferences: array<string, mixed>, must_change_password: bool}
      */
     private function publicRow(array $row): array
     {
@@ -71,6 +71,7 @@ final class LocalPasswordAuthenticator
             'role' => (string) $row['role'],
             'picture_url' => $pic !== null && $pic !== '' ? (string) $pic : null,
             'preferences' => UserPreferences::decode(isset($row['preferences']) ? (string) $row['preferences'] : null),
+            'must_change_password' => UserPasswordSupport::mustChangeFromRow($row),
         ];
     }
 }

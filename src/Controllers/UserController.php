@@ -9,7 +9,11 @@ use App\Auth\UserRole;
 use App\JsonRequestBody;
 use App\JsonResponse;
 use App\Services\AuthorizationService;
+use App\Services\InviteEmailContent;
+use App\Services\MailService;
 use App\Services\ProjectScopeResolver;
+use App\Services\UserInviteNotifier;
+use App\Services\UserPasswordSupport;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -23,8 +27,26 @@ final class UserController
         private readonly PDO $pdo,
         AuthorizationService $authorization,
         ProjectScopeResolver $projectScope,
+        private readonly UserInviteNotifier $inviteNotifier,
+        private readonly MailService $mailService,
+        private readonly InviteEmailContent $inviteContent,
     ) {
         $this->initAuthorization($authorization, $projectScope);
+    }
+
+    /** GET /api/users/invite-email-defaults */
+    public function inviteEmailDefaults(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        if ($denied = $this->authorizeManageUsers()) {
+            return $denied;
+        }
+
+        return JsonResponse::encode($response, [
+            'data' => [
+                'subject' => $this->inviteContent->defaultSubject(),
+                'intro' => $this->inviteContent->defaultIntroTemplate(),
+            ],
+        ]);
     }
 
     /** GET /api/users */
@@ -54,7 +76,7 @@ final class UserController
         return JsonResponse::encode($response, ['data' => $rows]);
     }
 
-    /** POST /api/users — body: { email, password, display_name, role? } */
+    /** POST /api/users — body: { email, display_name, role?, password?, send_invite_email?, invite_intro? } */
     public function create(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         if ($denied = $this->authorizeManageUsers()) {
@@ -68,19 +90,45 @@ final class UserController
         }
 
         $email = strtolower(trim((string) ($data['email'] ?? '')));
-        $password = (string) ($data['password'] ?? '');
         $displayName = trim((string) ($data['display_name'] ?? ''));
         $role = trim((string) ($data['role'] ?? UserRole::USER));
-        if ($email === '' || $password === '' || $displayName === '') {
-            return JsonResponse::error('email, password, and display_name are required', 422);
+        if ($email === '' || $displayName === '') {
+            return JsonResponse::error('email and display_name are required', 422);
         }
         if (!UserRole::isValid($role)) {
             return JsonResponse::error('role must be admin or user', 422);
         }
 
-        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $adminProvidedPassword = array_key_exists('password', $data) && trim((string) $data['password']) !== '';
+        $plainPassword = $adminProvidedPassword
+            ? (string) $data['password']
+            : UserPasswordSupport::generateTemporaryPassword();
+        $passwordError = UserPasswordSupport::validateNewPassword($plainPassword);
+        if ($passwordError !== null) {
+            return JsonResponse::error($passwordError, 422);
+        }
+
+        $sendInvite = !array_key_exists('send_invite_email', $data)
+            || filter_var($data['send_invite_email'], FILTER_VALIDATE_BOOLEAN);
+
+        $inviteIntro = null;
+        if ($sendInvite && array_key_exists('invite_intro', $data)) {
+            $inviteIntro = (string) $data['invite_intro'];
+            if (trim($inviteIntro) === '') {
+                return JsonResponse::error('invite_intro cannot be empty', 422);
+            }
+            if (strlen($inviteIntro) > InviteEmailContent::MAX_INTRO_LENGTH) {
+                return JsonResponse::error(
+                    'invite_intro must be at most ' . InviteEmailContent::MAX_INTRO_LENGTH . ' characters',
+                    422,
+                );
+            }
+        }
+
+        $hash = password_hash($plainPassword, PASSWORD_DEFAULT);
         $ins = $this->pdo->prepare(
-            'INSERT INTO users (email, password_hash, display_name, role) VALUES (:email, :ph, :dn, :role)'
+            'INSERT INTO users (email, password_hash, display_name, role, must_change_password)
+             VALUES (:email, :ph, :dn, :role, 1)'
         );
         try {
             $ins->execute(['email' => $email, 'ph' => $hash, 'dn' => $displayName, 'role' => $role]);
@@ -105,7 +153,30 @@ final class UserController
             return JsonResponse::error('user not found', 404);
         }
 
-        return JsonResponse::encode($response, ['data' => $row], 201);
+        $inviteEmailSent = false;
+        if ($sendInvite) {
+            $inviteEmailSent = $this->inviteNotifier->sendInvite(
+                $email,
+                $displayName,
+                $plainPassword,
+                $request,
+                $inviteIntro,
+            );
+        }
+
+        $payload = [
+            'data' => $row,
+            'invite_email_sent' => $inviteEmailSent,
+        ];
+        if ($sendInvite && !$inviteEmailSent) {
+            $payload['temporary_password'] = $plainPassword;
+            $mailErr = $this->mailService->getLastError();
+            if ($mailErr !== '') {
+                $payload['invite_email_error'] = $mailErr;
+            }
+        }
+
+        return JsonResponse::encode($response, $payload, 201);
     }
 
     /** PATCH /api/users/{userId} */
@@ -160,8 +231,13 @@ final class UserController
             if ($password === '') {
                 return JsonResponse::error('password cannot be empty', 422);
             }
+            $passwordError = UserPasswordSupport::validateNewPassword($password);
+            if ($passwordError !== null) {
+                return JsonResponse::error($passwordError, 422);
+            }
             $sets[] = 'password_hash = :ph';
             $params['ph'] = password_hash($password, PASSWORD_DEFAULT);
+            $sets[] = 'must_change_password = 1';
         }
         $syncMemberships = array_key_exists('project_memberships', $data);
         $effectiveRole = array_key_exists('role', $params)

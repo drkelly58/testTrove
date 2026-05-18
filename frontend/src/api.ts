@@ -1041,20 +1041,45 @@ export async function fetchUsers(): Promise<UserAccount[]> {
   return data.data;
 }
 
+export async function fetchInviteEmailDefaults(): Promise<{ intro: string; subject?: string }> {
+  const res = await apiFetch(`${base}/api/users/invite-email-defaults`);
+  const data = await parseJson<{ data: { intro: string; subject?: string } }>(res);
+  return data.data;
+}
+
+export type CreateUserResult = {
+  user: UserAccount;
+  invite_email_sent: boolean;
+  temporary_password?: string;
+  invite_email_error?: string;
+};
+
 export async function createUser(body: {
   email: string;
-  password: string;
   display_name: string;
+  password?: string;
+  send_invite_email?: boolean;
+  invite_intro?: string;
   role?: 'admin' | 'user';
   project_memberships?: { project_id: number; role: 'member' | 'tester' | 'viewer' }[];
-}): Promise<UserAccount> {
+}): Promise<CreateUserResult> {
   const res = await apiFetch(`${base}/api/users`, {
     method: 'POST',
     headers: jsonWriteHeaders,
     body: JSON.stringify(body),
   });
-  const data = await parseJson<{ data: UserAccount }>(res);
-  return data.data;
+  const data = await parseJson<{
+    data: UserAccount;
+    invite_email_sent?: boolean;
+    temporary_password?: string;
+    invite_email_error?: string;
+  }>(res);
+  return {
+    user: data.data,
+    invite_email_sent: data.invite_email_sent ?? false,
+    temporary_password: data.temporary_password,
+    invite_email_error: data.invite_email_error,
+  };
 }
 
 export async function updateUser(

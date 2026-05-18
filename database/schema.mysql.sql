@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name VARCHAR(255) NOT NULL,
   role VARCHAR(32) NOT NULL DEFAULT 'user',
   preferences TEXT NOT NULL DEFAULT ('{}'),
+  must_change_password TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY users_email_unique (email),

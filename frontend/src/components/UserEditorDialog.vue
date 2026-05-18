@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue';
-import type { Project, UserAccount } from '@/api';
+import { fetchInviteEmailDefaults, type Project, type UserAccount } from '@/api';
 import {
   globalUserRoleHelp,
   globalUserRoleSelectOptions,
@@ -16,6 +16,7 @@ const props = withDefaults(
     projects: Project[];
     user?: UserAccount | null;
     requirePassword?: boolean;
+    inviteByEmail?: boolean;
     submitLabel?: string;
     busy?: boolean;
     errorMessage?: string | null;
@@ -23,6 +24,7 @@ const props = withDefaults(
   {
     user: null,
     requirePassword: false,
+    inviteByEmail: false,
     submitLabel: 'Save',
     busy: false,
     errorMessage: null,
@@ -39,6 +41,8 @@ const emit = defineEmits<{
       password?: string;
       role: GlobalUserRole;
       project_memberships: { project_id: number; role: ProjectRole }[];
+      send_invite_email?: boolean;
+      invite_intro?: string;
     },
   ): void;
   (e: 'cancel'): void;
@@ -49,6 +53,10 @@ const headingId = `user-editor-title-${useId()}`;
 const email = ref('');
 const displayName = ref('');
 const password = ref('');
+const sendInviteEmail = ref(true);
+const inviteIntro = ref('');
+const inviteIntroLoading = ref(false);
+const showManualPassword = ref(false);
 const globalRole = ref<GlobalUserRole>('user');
 /** project id → role, or empty string when not a member */
 const membershipRoles = ref<Record<number, string>>({});
@@ -62,6 +70,9 @@ function initFromProps(): void {
   email.value = u?.email ?? '';
   displayName.value = u?.display_name ?? '';
   password.value = '';
+  sendInviteEmail.value = true;
+  inviteIntro.value = '';
+  showManualPassword.value = false;
   globalRole.value = u?.role === 'admin' ? 'admin' : 'user';
   const next: Record<number, string> = {};
   for (const p of props.projects) {
@@ -71,11 +82,29 @@ function initFromProps(): void {
   membershipRoles.value = next;
 }
 
+async function loadInviteDefaults(): Promise<void> {
+  if (!props.inviteByEmail || props.user) {
+    return;
+  }
+  inviteIntroLoading.value = true;
+  try {
+    const defaults = await fetchInviteEmailDefaults();
+    inviteIntro.value = defaults.intro;
+  } catch {
+    inviteIntro.value = 'Hello {display_name},\n\nAn account was created for you on TestTrove.';
+  } finally {
+    inviteIntroLoading.value = false;
+  }
+}
+
 watch(
   () => [props.modelValue, props.user] as const,
   ([open]) => {
     if (open) {
       initFromProps();
+      if (!props.user && props.inviteByEmail) {
+        void loadInviteDefaults();
+      }
     }
   },
   { immediate: true },
@@ -102,17 +131,33 @@ function submit(): void {
     password?: string;
     role: GlobalUserRole;
     project_memberships: { project_id: number; role: ProjectRole }[];
+    send_invite_email?: boolean;
+    invite_intro?: string;
   } = {
     email: email.value.trim(),
     display_name: displayName.value.trim(),
     role: globalRole.value,
     project_memberships: memberships,
   };
-  const pw = password.value.trim();
-  if (pw !== '') {
-    payload.password = pw;
-  } else if (props.requirePassword) {
-    return;
+  if (props.inviteByEmail) {
+    payload.send_invite_email = sendInviteEmail.value;
+    if (sendInviteEmail.value) {
+      const intro = inviteIntro.value.trim();
+      if (intro !== '') {
+        payload.invite_intro = intro;
+      }
+    }
+    const pw = password.value.trim();
+    if (pw !== '') {
+      payload.password = pw;
+    }
+  } else {
+    const pw = password.value.trim();
+    if (pw !== '') {
+      payload.password = pw;
+    } else if (props.requirePassword) {
+      return;
+    }
   }
   emit('submit', payload);
 }
@@ -135,18 +180,47 @@ function submit(): void {
             <span class="ue-lab">Display name</span>
             <input v-model="displayName" class="ue-input" type="text" required />
           </label>
-          <label class="ue-field">
-            <span class="ue-lab">{{ requirePassword ? 'Password' : 'New password' }}</span>
+          <label v-if="inviteByEmail" class="ue-field ue-check">
+            <input v-model="sendInviteEmail" type="checkbox" />
+            <span>Send invite email with a temporary password</span>
+          </label>
+          <p v-if="inviteByEmail" class="ue-hint">
+            The user must set a new password on first sign-in. If email is not configured, the temporary password is
+            shown once after creation.
+          </p>
+          <label v-if="inviteByEmail && sendInviteEmail" class="ue-field">
+            <span class="ue-lab">Invite message (intro)</span>
+            <textarea
+              v-model="inviteIntro"
+              class="ue-input ue-textarea"
+              rows="5"
+              :disabled="inviteIntroLoading"
+            />
+            <span class="ue-hint">
+              Email, temporary password, and a sign-in link are added automatically below this message. Use
+              <code>{display_name}</code> for the user's display name.
+            </span>
+          </label>
+          <label v-if="!inviteByEmail || showManualPassword" class="ue-field">
+            <span class="ue-lab">{{ requirePassword ? 'Password' : inviteByEmail ? 'Temporary password (optional)' : 'New password' }}</span>
             <input
               v-model="password"
               class="ue-input"
               type="password"
               :required="requirePassword"
-              :placeholder="requirePassword ? '' : 'Leave blank to keep current'"
+              :placeholder="inviteByEmail ? 'Leave blank to generate automatically' : requirePassword ? '' : 'Leave blank to keep current'"
               autocomplete="new-password"
             />
-            <span v-if="!requirePassword" class="ue-hint">Only set when resetting the password.</span>
+            <span v-if="!requirePassword && !inviteByEmail" class="ue-hint">Only set when resetting the password.</span>
           </label>
+          <button
+            v-else-if="inviteByEmail"
+            type="button"
+            class="ue-link-btn"
+            @click="showManualPassword = true"
+          >
+            Set temporary password manually
+          </button>
           <label class="ue-field">
             <span class="ue-lab">Global role</span>
             <select v-model="globalRole" class="ue-input">
@@ -276,6 +350,16 @@ function submit(): void {
   color: var(--muted, #64748b);
 }
 
+.ue-textarea {
+  resize: vertical;
+  min-height: 6rem;
+  line-height: 1.4;
+}
+
+.ue-hint code {
+  font-size: 0.9em;
+}
+
 .ue-hint {
   font-size: 0.78rem;
   color: var(--muted, #94a3b8);
@@ -377,5 +461,28 @@ function submit(): void {
 
 .ue-foot .btn.primary:hover:not(:disabled) {
   filter: brightness(1.05);
+}
+
+.ue-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ue-check input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.ue-link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-2, #38bdf8);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
 }
 </style>
