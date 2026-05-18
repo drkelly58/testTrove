@@ -23,12 +23,26 @@ function isShortSha(buildId: string): boolean {
   return /^[0-9a-f]{7}$/i.test(base) || base === 'unknown';
 }
 
+function parseBuildId(buildId: string): { version: string; dirty: boolean } {
+  const dirty = buildId.endsWith('-dirty');
+  const version = dirty ? buildId.slice(0, -'-dirty'.length) : buildId;
+  return { version, dirty };
+}
+
+function formatNonMainLabel(version: string, dirty: boolean, branch: string): string {
+  return [version, dirty ? 'dirty' : '', branch].filter(Boolean).join(' - ');
+}
+
 export function formatBuildLabel(): { label: string; title: string } {
   const buildId = import.meta.env.VITE_APP_BUILD_ID || 'unknown';
   const buildTime = import.meta.env.VITE_APP_BUILD_TIME || '';
+  const branch = import.meta.env.VITE_APP_BUILD_BRANCH || '';
+  const { version, dirty } = parseBuildId(buildId);
 
   let core: string;
-  if (isShortSha(buildId)) {
+  if (branch && branch !== 'main') {
+    core = formatNonMainLabel(version, dirty, branch);
+  } else if (isShortSha(buildId)) {
     const when = formatBuildTime(buildTime);
     core = when ? `${buildId} · ${when}` : buildId;
   } else {

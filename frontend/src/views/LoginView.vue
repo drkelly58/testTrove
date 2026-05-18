@@ -95,7 +95,11 @@ async function submitLocal(ev: Event) {
         'Signed in but the session could not be confirmed. Clear cookies for this site and try again.';
       return;
     }
-    await router.push(returnPath(s));
+    if (s.user.must_change_password) {
+      await router.push('/change-password');
+    } else {
+      await router.push(returnPath(s));
+    }
   } catch (e) {
     formError.value = e instanceof Error ? e.message : 'Sign-in failed';
   } finally {

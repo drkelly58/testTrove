@@ -41,7 +41,21 @@ router.beforeEach(async (to) => {
   if (s.auth_required && !s.user && !isPublic) {
     return { name: 'login', query: { return_to: to.fullPath } };
   }
+  if (
+    s.auth_required &&
+    s.user?.must_change_password &&
+    to.name !== 'changePassword' &&
+    to.name !== 'login'
+  ) {
+    return { name: 'changePassword', replace: true };
+  }
+  if (to.name === 'changePassword' && s.auth_required && s.user && !s.user.must_change_password) {
+    return defaultLandingPath(s);
+  }
   if (to.name === 'login' && s.auth_required && s.user) {
+    if (s.user.must_change_password) {
+      return { name: 'changePassword', replace: true };
+    }
     const rt = typeof to.query.return_to === 'string' ? to.query.return_to : '/';
     const safe = rt.startsWith('/') && !rt.startsWith('//') ? rt : '/';
     if (safe === '/' || safe === '/login') {

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import ApiUnavailableView from './views/ApiUnavailableView.vue';
 import DashboardView from './views/DashboardView.vue';
 import HomeView from './views/HomeView.vue';
+import ChangePasswordView from './views/ChangePasswordView.vue';
 import LoginView from './views/LoginView.vue';
 import RunOverviewView from './views/RunOverviewView.vue';
 import RunSessionView from './views/RunSessionView.vue';
@@ -19,6 +20,7 @@ export const router = createRouter({
       meta: { public: true },
     },
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
+    { path: '/change-password', name: 'changePassword', component: ChangePasswordView },
     { path: '/settings', redirect: '/' },
     { path: '/admin/users', name: 'usersAdmin', component: UsersAdminView, meta: { requiresAdmin: true } },
     { path: '/runs', name: 'runs', component: RunsHubView },

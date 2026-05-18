@@ -12,7 +12,7 @@ import {
   type Project,
   type UserAccount,
 } from '@/api';
-import { loadAuthSession, type AuthSessionPayload } from '@/authSession';
+import { emailNotificationsAvailable, loadAuthSession, type AuthSessionPayload } from '@/authSession';
 import { globalRoleLabel, projectRoleLabel } from '@/roles';
 import type { GlobalUserRole } from '@/roles';
 import type { ProjectRole } from '@/authSession';
@@ -32,6 +32,7 @@ const error = ref<string | null>(null);
 const createOpen = ref(false);
 const createBusy = ref(false);
 const createError = ref<string | null>(null);
+const createNotice = ref<string | null>(null);
 
 const editUser = ref<UserAccount | null>(null);
 const editBusy = ref(false);
@@ -79,6 +80,7 @@ void loadUsers();
 
 function openCreate() {
   createError.value = null;
+  createNotice.value = null;
   createOpen.value = true;
 }
 
@@ -88,22 +90,31 @@ async function submitCreate(payload: {
   password?: string;
   role: GlobalUserRole;
   project_memberships: { project_id: number; role: ProjectRole }[];
+  send_invite_email?: boolean;
+  invite_intro?: string;
 }) {
-  if (!payload.password) {
-    createError.value = 'Password is required';
-    return;
-  }
   createBusy.value = true;
   createError.value = null;
+  createNotice.value = null;
   try {
-    await createUser({
+    const result = await createUser({
       email: payload.email,
       display_name: payload.display_name,
       password: payload.password,
+      send_invite_email: payload.send_invite_email,
+      invite_intro: payload.invite_intro,
       role: payload.role,
       project_memberships: payload.project_memberships,
     });
     createOpen.value = false;
+    if (result.invite_email_sent) {
+      createNotice.value = `Invite email sent to ${result.user.email}.`;
+    } else if (result.temporary_password) {
+      const err = result.invite_email_error ? ` (${result.invite_email_error})` : '';
+      createNotice.value = `User created. Temporary password: ${result.temporary_password}${err}`;
+    } else {
+      createNotice.value = `User ${result.user.display_name} created.`;
+    }
     await loadUsers();
   } catch (e) {
     createError.value = e instanceof Error ? e.message : 'Could not create user';
@@ -218,6 +229,8 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
       </div>
     </header>
 
+    <div v-if="createNotice" class="state notice">{{ createNotice }}</div>
+
     <div v-if="loading" class="state">Loading users…</div>
     <div v-else-if="error" class="state err">{{ error }}</div>
 
@@ -277,8 +290,8 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
       v-model="createOpen"
       title="New user"
       :projects="projects"
-      :require-password="true"
-      submit-label="Create"
+      :invite-by-email="emailNotificationsAvailable"
+      submit-label="Create user"
       :busy="createBusy"
       :error-message="createError"
       @submit="submitCreate"
@@ -347,6 +360,16 @@ const deleteBlocked = computed(() => deleteTarget.value !== null && currentUserI
 
 .state.err {
   color: var(--danger);
+}
+
+.state.notice {
+  color: var(--text);
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent-2, #38bdf8) 10%, var(--panel-2));
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .empty {

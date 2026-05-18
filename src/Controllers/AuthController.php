@@ -12,9 +12,11 @@ use App\Auth\OAuthResourceProfileMapper;
 use App\JsonRequestBody;
 use App\JsonResponse;
 use App\Mail\MailSettings;
+use App\Services\AppUrlResolver;
 use App\Services\AuthorizationService;
 use App\Services\LocalPasswordAuthenticator;
 use App\Services\OAuthUserProvisioner;
+use App\Services\UserPasswordSupport;
 use App\Services\UserPreferencesService;
 use App\UserPreferences;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
@@ -29,14 +31,18 @@ final class AuthController
     private OAuthResourceProfileMapper $profileMapper;
     private OAuthUserProvisioner $users;
 
+    private readonly AppUrlResolver $appUrlResolver;
+
     public function __construct(
         private readonly PDO $pdo,
         private readonly AuthSettings $settings,
         private readonly AuthorizationService $authorization,
+        ?AppUrlResolver $appUrlResolver = null,
     ) {
         $this->providerFactory = new OAuthProviderFactory($_ENV);
         $this->profileMapper = new OAuthResourceProfileMapper();
         $this->users = new OAuthUserProvisioner($pdo);
+        $this->appUrlResolver = $appUrlResolver ?? new AppUrlResolver(MailSettings::fromEnv($_ENV));
     }
 
     public function session(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -111,6 +117,69 @@ final class AuthController
                 'session_key' => session_id(),
             ],
         ]);
+    }
+
+    public function changePassword(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        if (empty($_SESSION['user_id']) || !is_numeric((string) $_SESSION['user_id'])) {
+            return JsonResponse::error('Authentication required', 401);
+        }
+        if (!$this->settings->isLocalAuthEnabled()) {
+            return JsonResponse::error('Local password sign-in is not enabled', 404);
+        }
+
+        try {
+            $data = JsonRequestBody::decodeAssoc($request);
+        } catch (\JsonException $e) {
+            return JsonResponse::error('Invalid JSON: ' . $e->getMessage(), 422);
+        }
+
+        $current = (string) ($data['current_password'] ?? '');
+        $newPassword = (string) ($data['new_password'] ?? '');
+        if ($current === '' || $newPassword === '') {
+            return JsonResponse::error('current_password and new_password are required', 422);
+        }
+
+        $passwordError = UserPasswordSupport::validateNewPassword($newPassword);
+        if ($passwordError !== null) {
+            return JsonResponse::error($passwordError, 422);
+        }
+
+        $userId = (int) $_SESSION['user_id'];
+        $stmt = $this->pdo->prepare(
+            'SELECT password_hash, oauth_provider, oauth_subject FROM users WHERE id = :id LIMIT 1'
+        );
+        $stmt->execute(['id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return JsonResponse::error('User not found', 404);
+        }
+
+        $op = trim((string) ($row['oauth_provider'] ?? ''));
+        $os = trim((string) ($row['oauth_subject'] ?? ''));
+        if ($op !== '' || $os !== '') {
+            return JsonResponse::error('This account uses external sign-in; password cannot be changed here', 422);
+        }
+
+        $hash = (string) ($row['password_hash'] ?? '');
+        if ($hash === '' || !password_verify($current, $hash)) {
+            return JsonResponse::error('Current password is incorrect', 401);
+        }
+        if (password_verify($newPassword, $hash)) {
+            return JsonResponse::error('New password must be different from the current password', 422);
+        }
+
+        $upd = $this->pdo->prepare(
+            'UPDATE users SET password_hash = :ph, must_change_password = 0 WHERE id = :id'
+        );
+        $upd->execute(['ph' => password_hash($newPassword, PASSWORD_DEFAULT), 'id' => $userId]);
+
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return JsonResponse::error('User not found', 404);
+        }
+
+        return JsonResponse::encode($response, ['data' => ['user' => $user]]);
     }
 
     public function patchPreferences(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -256,24 +325,7 @@ final class AuthController
 
     private function publicBase(ServerRequestInterface $request): string
     {
-        $fixed = $this->settings->appBaseUrl();
-        if ($fixed !== '') {
-            return rtrim($fixed, '/');
-        }
-        $uri = $request->getUri();
-        $scheme = $uri->getScheme();
-        if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
-            $x = strtolower(trim((string) $_SERVER['HTTP_X_FORWARDED_PROTO']));
-            if ($x === 'https' || $x === 'http') {
-                $scheme = $x;
-            }
-        }
-        $host = $uri->getHost();
-        $port = $uri->getPort();
-        $default = ($scheme === 'https') ? 443 : 80;
-        $authority = $host . ($port !== null && $port !== $default ? ':' . $port : '');
-
-        return $scheme . '://' . $authority;
+        return $this->appUrlResolver->publicBase($request);
     }
 
     private function browserRedirect(ServerRequestInterface $request, string $location): ResponseInterface

@@ -126,6 +126,7 @@ final class Database
             self::testCaseStepsRelationalMigrations($pdo, $driver);
             self::oauthIdentityMigrations($pdo, $driver);
             self::userPreferencesMigrations($pdo, $driver);
+            self::usersMustChangePasswordMigrations($pdo, $driver);
             self::projectMembersMigrations($pdo, $driver);
             self::testRunsCreatedByMigrations($pdo, $driver);
             self::testRunsAssignedToMigrations($pdo, $driver);
@@ -142,6 +143,7 @@ final class Database
         self::testCaseStepsRelationalMigrations($pdo, $driver);
         self::oauthIdentityMigrations($pdo, $driver);
         self::userPreferencesMigrations($pdo, $driver);
+        self::usersMustChangePasswordMigrations($pdo, $driver);
         self::projectMembersMigrations($pdo, $driver);
         self::testRunsCreatedByMigrations($pdo, $driver);
         self::testRunsAssignedToMigrations($pdo, $driver);
@@ -719,6 +721,29 @@ final class Database
             );
         } elseif ($driver === 'pgsql') {
             $pdo->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences TEXT NOT NULL DEFAULT '{}'");
+        }
+    }
+
+    /** Force password change on next local sign-in (invited / admin-reset accounts). */
+    private static function usersMustChangePasswordMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'users')) {
+            return;
+        }
+        if (self::columnExists($pdo, $driver, 'users', 'must_change_password')) {
+            return;
+        }
+
+        if ($driver === 'sqlite') {
+            $pdo->exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+        } elseif ($driver === 'mysql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0',
+                ['duplicate column'],
+            );
+        } elseif ($driver === 'pgsql') {
+            $pdo->exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE');
         }
     }
 

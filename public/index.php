@@ -173,6 +173,7 @@ try {
     $auth = new AuthController($pdo, $authSettings, $authorization);
     $app->get('/api/auth/session', [$auth, 'session']);
     $app->post('/api/auth/login/local', [$auth, 'loginLocal']);
+    $app->post('/api/auth/change-password', [$auth, 'changePassword']);
     $app->get('/api/auth/login/{provider}', [$auth, 'login']);
     $app->get('/api/auth/callback/{provider}', [$auth, 'callback']);
     $app->patch('/api/auth/preferences', [$auth, 'patchPreferences']);
@@ -186,14 +187,23 @@ try {
     $workspace = new WorkspaceExchangeController($pdo, $authorization, $projectScope);
     $mailSettings = \App\Mail\MailSettings::fromEnv($_ENV);
     $mailService = new \App\Services\MailService($mailSettings);
+    $appUrlResolver = new \App\Services\AppUrlResolver($mailSettings);
+    $inviteEmailContent = \App\Services\InviteEmailContent::fromEnv($_ENV);
     $runEmailNotifier = new \App\Services\RunEmailNotifier($pdo, $mailSettings, $mailService);
     $runs = new RunController($pdo, $authorization, $projectScope, $runEmailNotifier);
-    $users = new UserController($pdo, $authorization, $projectScope);
+    $userInviteNotifier = new \App\Services\UserInviteNotifier(
+        $mailSettings,
+        $mailService,
+        $appUrlResolver,
+        $inviteEmailContent,
+    );
+    $users = new UserController($pdo, $authorization, $projectScope, $userInviteNotifier, $mailService, $inviteEmailContent);
     
     $app->get('/api/health', function ($request, $response) {
         return JsonResponse::encode($response, ['ok' => true]);
     });
     
+    $app->get('/api/users/invite-email-defaults', [$users, 'inviteEmailDefaults']);
     $app->get('/api/users', [$users, 'list']);
     $app->post('/api/users', [$users, 'create']);
     $app->patch('/api/users/{userId}', [$users, 'update']);
