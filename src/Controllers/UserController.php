@@ -126,12 +126,28 @@ final class UserController
         }
 
         $hash = password_hash($plainPassword, PASSWORD_DEFAULT);
-        $ins = $this->pdo->prepare(
-            'INSERT INTO users (email, password_hash, display_name, role, must_change_password)
-             VALUES (:email, :ph, :dn, :role, 1)'
-        );
+        $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $insertParams = [
+            'email' => $email,
+            'ph' => $hash,
+            'dn' => $displayName,
+            'role' => $role,
+            'mcp' => true,
+        ];
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
+            $ins = $this->pdo->prepare(
+                'INSERT INTO users (email, password_hash, display_name, role, must_change_password)
+                 VALUES (:email, :ph, :dn, :role, :mcp)
+                 RETURNING id'
+            );
+        } else {
+            $ins = $this->pdo->prepare(
+                'INSERT INTO users (email, password_hash, display_name, role, must_change_password)
+                 VALUES (:email, :ph, :dn, :role, :mcp)'
+            );
+        }
         try {
-            $ins->execute(['email' => $email, 'ph' => $hash, 'dn' => $displayName, 'role' => $role]);
+            $ins->execute($insertParams);
         } catch (\PDOException $e) {
             if (str_contains(strtolower($e->getMessage()), 'unique') || str_contains(strtolower($e->getMessage()), 'duplicate')) {
                 return JsonResponse::error('email already registered', 409);
@@ -139,9 +155,14 @@ final class UserController
             throw $e;
         }
 
-        $id = (int) $this->pdo->lastInsertId();
-        if ($id <= 0 && $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
-            $id = (int) $this->pdo->query('SELECT LAST_INSERT_ID()')->fetchColumn();
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
+            $inserted = $ins->fetch(PDO::FETCH_ASSOC);
+            $id = is_array($inserted) && isset($inserted['id']) ? (int) $inserted['id'] : 0;
+        } else {
+            $id = (int) $this->pdo->lastInsertId();
+            if ($id <= 0) {
+                $id = (int) $this->pdo->query('SELECT LAST_INSERT_ID()')->fetchColumn();
+            }
         }
 
         if ($role === UserRole::USER && array_key_exists('project_memberships', $data)) {
@@ -237,7 +258,8 @@ final class UserController
             }
             $sets[] = 'password_hash = :ph';
             $params['ph'] = password_hash($password, PASSWORD_DEFAULT);
-            $sets[] = 'must_change_password = 1';
+            $sets[] = 'must_change_password = :mcp';
+            $params['mcp'] = true;
         }
         $syncMemberships = array_key_exists('project_memberships', $data);
         $effectiveRole = array_key_exists('role', $params)

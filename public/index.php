@@ -170,7 +170,12 @@ try {
     $projectScope = new ProjectScopeResolver($pdo);
     $authorization = new AuthorizationService($pdo, $authSettings);
 
-    $auth = new AuthController($pdo, $authSettings, $authorization);
+    $instanceSettings = new \App\Services\InstanceSettingsService($pdo);
+    $effectiveEnv = $instanceSettings->mergeEnv($_ENV);
+    $mailSettings = \App\Mail\MailSettings::fromEnv($effectiveEnv);
+    $appUrlResolver = new \App\Services\AppUrlResolver($mailSettings);
+
+    $auth = new AuthController($pdo, $authSettings, $authorization, $appUrlResolver, $mailSettings);
     $app->get('/api/auth/session', [$auth, 'session']);
     $app->post('/api/auth/login/local', [$auth, 'loginLocal']);
     $app->post('/api/auth/change-password', [$auth, 'changePassword']);
@@ -185,10 +190,8 @@ try {
     $sections = new SectionController($pdo, $authorization, $projectScope);
     $cases = new CaseController($pdo, $authorization, $projectScope);
     $workspace = new WorkspaceExchangeController($pdo, $authorization, $projectScope);
-    $mailSettings = \App\Mail\MailSettings::fromEnv($_ENV);
     $mailService = new \App\Services\MailService($mailSettings);
-    $appUrlResolver = new \App\Services\AppUrlResolver($mailSettings);
-    $inviteEmailContent = \App\Services\InviteEmailContent::fromEnv($_ENV);
+    $inviteEmailContent = \App\Services\InviteEmailContent::fromEnv($effectiveEnv);
     $runEmailNotifier = new \App\Services\RunEmailNotifier($pdo, $mailSettings, $mailService);
     $runs = new RunController($pdo, $authorization, $projectScope, $runEmailNotifier);
     $userInviteNotifier = new \App\Services\UserInviteNotifier(
@@ -198,11 +201,24 @@ try {
         $inviteEmailContent,
     );
     $users = new UserController($pdo, $authorization, $projectScope, $userInviteNotifier, $mailService, $inviteEmailContent);
-    
+    $adminSettings = new \App\Controllers\AdminSettingsController(
+        $pdo,
+        $authorization,
+        $projectScope,
+        $instanceSettings,
+        $authSettings,
+        $_ENV,
+        $dbDriver,
+    );
+
     $app->get('/api/health', function ($request, $response) {
         return JsonResponse::encode($response, ['ok' => true]);
     });
     
+    $app->get('/api/admin/settings', [$adminSettings, 'get']);
+    $app->patch('/api/admin/settings', [$adminSettings, 'patch']);
+    $app->post('/api/admin/settings/test-mail', [$adminSettings, 'testMail']);
+
     $app->get('/api/users/invite-email-defaults', [$users, 'inviteEmailDefaults']);
     $app->get('/api/users', [$users, 'list']);
     $app->post('/api/users', [$users, 'create']);

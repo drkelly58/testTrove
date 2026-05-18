@@ -131,6 +131,7 @@ final class Database
             self::testRunsCreatedByMigrations($pdo, $driver);
             self::testRunsAssignedToMigrations($pdo, $driver);
             self::testRunsCompleteStateMigrations($pdo, $driver);
+            \App\Services\InstanceSettingsService::runMigration($pdo, $driver);
 
             return;
         }
@@ -148,6 +149,7 @@ final class Database
         self::testRunsCreatedByMigrations($pdo, $driver);
         self::testRunsAssignedToMigrations($pdo, $driver);
         self::testRunsCompleteStateMigrations($pdo, $driver);
+        \App\Services\InstanceSettingsService::runMigration($pdo, $driver);
     }
 
     /** Nullable owner for tester-scoped run visibility. */

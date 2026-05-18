@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue';
-import DataImportExport from '@/components/DataImportExport.vue';
+import { computed, inject } from 'vue';
 import { PROJECT_CONTEXT_KEY } from '@/projectContext';
 import { theme, type ThemeMode } from '@/theme';
 import { emailNotificationsAvailable } from '@/authSession';
@@ -26,10 +25,6 @@ const emit = defineEmits<{
 
 const projectCtx = inject(PROJECT_CONTEXT_KEY)!;
 
-type PrefsTab = 'general' | 'data';
-
-const activeTab = ref<PrefsTab>('general');
-
 const themeOptions: { id: ThemeMode; label: string; hint: string }[] = [
   { id: 'dark', label: 'Dark', hint: 'Default vault look' },
   { id: 'light', label: 'Light', hint: 'Bright workspace' },
@@ -47,7 +42,6 @@ const syncHint = computed(() =>
 );
 
 function close() {
-  activeTab.value = 'general';
   emit('update:modelValue', false);
 }
 
@@ -87,7 +81,6 @@ function onEmailCompletedChange(ev: Event) {
     <div v-if="modelValue" class="prefs-backdrop" role="presentation" @click.self="close">
       <section
         class="prefs-dialog"
-        :class="{ 'prefs-dialog-wide': activeTab === 'data' }"
         role="dialog"
         aria-modal="true"
         aria-labelledby="prefs-dialog-title"
@@ -97,29 +90,7 @@ function onEmailCompletedChange(ev: Event) {
           <button type="button" class="prefs-close" aria-label="Close" @click="close">×</button>
         </header>
 
-        <nav class="prefs-tabs" aria-label="Preference sections">
-          <button
-            type="button"
-            class="prefs-tab"
-            :class="{ active: activeTab === 'general' }"
-            :aria-selected="activeTab === 'general'"
-            @click="activeTab = 'general'"
-          >
-            General
-          </button>
-          <button
-            type="button"
-            class="prefs-tab"
-            :class="{ active: activeTab === 'data' }"
-            :aria-selected="activeTab === 'data'"
-            @click="activeTab = 'data'"
-          >
-            Import &amp; export
-          </button>
-        </nav>
-
         <div class="prefs-body">
-          <template v-if="activeTab === 'general'">
             <p class="prefs-sync-hint">{{ syncHint }}</p>
 
             <fieldset class="prefs-fieldset">
@@ -217,9 +188,6 @@ function onEmailCompletedChange(ev: Event) {
                 </label>
               </div>
             </fieldset>
-          </template>
-
-          <DataImportExport v-else />
         </div>
 
         <footer class="prefs-foot">
@@ -255,11 +223,6 @@ function onEmailCompletedChange(ev: Event) {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
-.prefs-dialog-wide {
-  width: min(640px, 100%);
-  max-height: min(92vh, 820px);
-}
-
 .prefs-head {
   display: flex;
   align-items: center;
@@ -289,36 +252,6 @@ function onEmailCompletedChange(ev: Event) {
 .prefs-close:hover {
   color: var(--text);
   background: var(--panel-2);
-}
-
-.prefs-tabs {
-  display: flex;
-  gap: 0.35rem;
-  padding: 0.65rem 1rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.prefs-tab {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 600;
-  padding: 0.45rem 0.65rem;
-  border-radius: 8px 8px 0 0;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-
-.prefs-tab:hover {
-  color: var(--text);
-}
-
-.prefs-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
 }
 
 .prefs-body {

@@ -5,8 +5,12 @@ import { apiFetch, createProject } from '@/api';
 import { authSession, clearAuthSessionState, refreshAuthSession } from '@/authContext';
 import EntityFormDialog from '@/components/EntityFormDialog.vue';
 import type { FieldDef } from '@/components/EntityFormDialog.vue';
+import GearMenu from '@/components/GearMenu.vue';
+import ImportExportDialog from '@/components/ImportExportDialog.vue';
 import IconButton from '@/components/IconButton.vue';
+import SystemSettingsDialog from '@/components/SystemSettingsDialog.vue';
 import PreferencesDialog from '@/components/PreferencesDialog.vue';
+import ProfileMenu from '@/components/ProfileMenu.vue';
 import {
   PROJECT_CONTEXT_KEY,
   projectContextForProvide,
@@ -47,6 +51,8 @@ const newProjectFields: FieldDef[] = [
 const router = useRouter();
 const logoutBusy = ref(false);
 const preferencesOpen = ref(false);
+const systemSettingsOpen = ref(false);
+const importExportOpen = ref(false);
 
 const canAddProject = computed(() => canCreateProject(authSession.value));
 const showUsersAdmin = computed(() => canManageUsers(authSession.value));
@@ -238,35 +244,41 @@ async function submitNewProject(values: Record<string, string | number | boolean
         >
           Sign in
         </RouterLink>
-        <span v-if="authSession?.user" class="nav-user" :title="authSession.user.email">
-          {{ authSession.user.display_name }}
-        </span>
-        <button
-          v-if="authSession?.user"
-          type="button"
-          class="nav-link nav-logout"
-          :disabled="logoutBusy"
-          @click="logout"
-        >
-          Sign out
-        </button>
-        <button
-          type="button"
-          class="nav-link nav-gear"
-          aria-label="Preferences"
-          title="Preferences"
-          @click="preferencesOpen = true"
-        >
-          <svg class="gear-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.6-.22l-2.39.96c-.52-.4-1.08-.73-1.69-.98l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.61.25-1.17.59-1.69.98l-2.39-.96c-.22-.08-.47 0-.6.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.6.22l2.39-.96c.52.4 1.08.73 1.69.98l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.61-.25 1.17-.59 1.69-.98l2.39.96c.22.08.47 0 .6-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-            />
-          </svg>
-        </button>
+        <div class="nav-actions">
+          <ProfileMenu
+            v-if="authSession?.user"
+            :user="authSession.user"
+            :logout-busy="logoutBusy"
+            @open-preferences="preferencesOpen = true"
+            @logout="logout"
+          />
+          <GearMenu
+            v-if="authSession?.user"
+            :show-system-settings="showUsersAdmin"
+            @open-system-settings="systemSettingsOpen = true"
+            @open-import-export="importExportOpen = true"
+          />
+          <button
+            v-else
+            type="button"
+            class="nav-link nav-gear"
+            aria-label="Preferences"
+            title="Preferences"
+            @click="preferencesOpen = true"
+          >
+            <svg class="gear-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.6-.22l-2.39.96c-.52-.4-1.08-.73-1.69-.98l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.61.25-1.17.59-1.69-.98l-2.39-.96c-.22-.08-.47 0-.6.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.6.22l2.39-.96c.52.4 1.08.73 1.69.98l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.61-.25 1.17-.59 1.69-.98l2.39.96c.22.08.47 0 .6-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+              />
+            </svg>
+          </button>
+        </div>
       </nav>
     </header>
     <PreferencesDialog v-model="preferencesOpen" />
+    <SystemSettingsDialog v-model="systemSettingsOpen" />
+    <ImportExportDialog v-model="importExportOpen" />
     <EntityFormDialog
       v-model="newProjectOpen"
       title="New project"
@@ -429,25 +441,10 @@ a {
   align-items: center;
 }
 
-.nav-user {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--muted);
-  max-width: 10rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-logout {
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-}
-
-.nav-logout:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
 }
 
 .nav-link {
