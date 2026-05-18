@@ -32,17 +32,20 @@ final class AuthController
     private OAuthUserProvisioner $users;
 
     private readonly AppUrlResolver $appUrlResolver;
+    private readonly MailSettings $mailSettings;
 
     public function __construct(
         private readonly PDO $pdo,
         private readonly AuthSettings $settings,
         private readonly AuthorizationService $authorization,
         ?AppUrlResolver $appUrlResolver = null,
+        ?MailSettings $mailSettings = null,
     ) {
         $this->providerFactory = new OAuthProviderFactory($_ENV);
         $this->profileMapper = new OAuthResourceProfileMapper();
         $this->users = new OAuthUserProvisioner($pdo);
-        $this->appUrlResolver = $appUrlResolver ?? new AppUrlResolver(MailSettings::fromEnv($_ENV));
+        $this->mailSettings = $mailSettings ?? MailSettings::fromEnv($_ENV);
+        $this->appUrlResolver = $appUrlResolver ?? new AppUrlResolver($this->mailSettings);
     }
 
     public function session(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -78,7 +81,7 @@ final class AuthController
                 'project_roles' => $projectRoles,
                 'has_assigned_open_runs' => $hasAssignedOpenRuns,
                 'dev_permissions' => $devPermissions,
-                'email_notifications_available' => MailSettings::fromEnv($_ENV)->isEnabled(),
+                'email_notifications_available' => $this->mailSettings->isEnabled(),
             ],
         ]);
     }
@@ -170,9 +173,13 @@ final class AuthController
         }
 
         $upd = $this->pdo->prepare(
-            'UPDATE users SET password_hash = :ph, must_change_password = 0 WHERE id = :id'
+            'UPDATE users SET password_hash = :ph, must_change_password = :mcp WHERE id = :id'
         );
-        $upd->execute(['ph' => password_hash($newPassword, PASSWORD_DEFAULT), 'id' => $userId]);
+        $upd->execute([
+            'ph' => password_hash($newPassword, PASSWORD_DEFAULT),
+            'mcp' => false,
+            'id' => $userId,
+        ]);
 
         $user = $this->users->findById($userId);
         if ($user === null) {
