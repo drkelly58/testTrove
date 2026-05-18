@@ -180,7 +180,7 @@ Copy the commented block from **`.env.example`** (`# --- Email notifications ---
 
 ## Deployment
 
-Deploy **`public/`** as the web-exposed directory (never the repository root). Run **`npm run build`** in `frontend/` before release so `public/app/` exists. After deploy, confirm the release via **Preferences** (footer): git tag on `HEAD`, or short SHA and build time.
+Deploy **`public/`** as the web-exposed directory (never the repository root). Run **`npm run build`** in `frontend/` before release so `public/app/` exists. After deploy, confirm the release via **Preferences** (footer): git tag on `HEAD`, or short SHA and build time; builds from branches other than **`main`** also show the branch (and **`dirty`** when the tree was not clean at build time).
 
 ### Self Hosted
 

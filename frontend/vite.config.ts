@@ -17,6 +17,9 @@ export default defineConfig(({ mode }) => {
   if (!process.env.VITE_APP_BUILD_TIME?.trim()) {
     process.env.VITE_APP_BUILD_TIME = buildMeta.buildTime;
   }
+  if (!process.env.VITE_APP_BUILD_BRANCH?.trim()) {
+    process.env.VITE_APP_BUILD_BRANCH = buildMeta.buildBranch;
+  }
 
   const envDir = path.resolve(__dirname);
   const env = loadEnv(mode, envDir, '');

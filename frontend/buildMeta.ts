@@ -24,6 +24,7 @@ function defaultBuildId(): string {
 export type BuildMeta = {
   buildId: string;
   buildTime: string;
+  buildBranch: string;
 };
 
 /** Resolve build id (tag or short SHA) and ISO build time for Vite env injection. */
@@ -40,5 +41,9 @@ export function resolveBuildMeta(): BuildMeta {
     (typeof process.env.VITE_APP_BUILD_TIME === 'string' && process.env.VITE_APP_BUILD_TIME.trim()) ||
     new Date().toISOString();
 
-  return { buildId, buildTime };
+  const buildBranch =
+    (typeof process.env.VITE_APP_BUILD_BRANCH === 'string' && process.env.VITE_APP_BUILD_BRANCH.trim()) ||
+    git('git rev-parse --abbrev-ref HEAD');
+
+  return { buildId, buildTime, buildBranch };
 }
