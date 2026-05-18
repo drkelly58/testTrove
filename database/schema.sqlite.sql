@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
   precondition TEXT,
   priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'ready', 'deprecated')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -121,6 +121,7 @@ final class Database
             $pdo->exec($sql);
             self::sqliteAdditiveMigrations($pdo);
             self::sectionAdditiveMigrations($pdo, $driver);
+            self::testCaseSortOrderMigrations($pdo, $driver);
             self::runItemSeverityMigrations($pdo, $driver);
             self::runItemScreenshotsMigrations($pdo, $driver);
             self::testCaseStepsRelationalMigrations($pdo, $driver);
@@ -138,6 +139,7 @@ final class Database
 
         self::execScriptStatements($pdo, $sql);
         self::sectionAdditiveMigrations($pdo, $driver);
+        self::testCaseSortOrderMigrations($pdo, $driver);
         self::testRunsSectionAndRunKindMigrations($pdo, $driver);
         self::runItemSeverityMigrations($pdo, $driver);
         self::runItemScreenshotsMigrations($pdo, $driver);
@@ -1457,6 +1459,45 @@ final class Database
             self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_sections_suite ON test_sections(suite_id)', ['duplicate']);
             self::safeExec($pdo, 'CREATE INDEX IF NOT EXISTS idx_cases_section ON test_cases(section_id)', ['duplicate']);
         }
+    }
+
+    /** Order cases within each section (was implicit via id on legacy DBs). */
+    private static function testCaseSortOrderMigrations(PDO $pdo, string $driver): void
+    {
+        if (!self::tableExists($pdo, $driver, 'test_cases')) {
+            return;
+        }
+        if (self::columnExists($pdo, $driver, 'test_cases', 'sort_order')) {
+            return;
+        }
+
+        $ignore = ['duplicate column name', 'duplicate column', 'already exists'];
+        if ($driver === 'mysql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_cases ADD COLUMN sort_order INT NOT NULL DEFAULT 0 AFTER status',
+                $ignore
+            );
+        } elseif ($driver === 'pgsql') {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0',
+                $ignore
+            );
+        } else {
+            self::safeExec(
+                $pdo,
+                'ALTER TABLE test_cases ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0',
+                $ignore
+            );
+        }
+
+        $pdo->exec(
+            'UPDATE test_cases SET sort_order = (
+               SELECT COUNT(*) - 1 FROM test_cases c2
+               WHERE c2.section_id = test_cases.section_id AND c2.id < test_cases.id
+             )'
+        );
     }
 
     private static function testSectionsCreateSql(string $driver): string

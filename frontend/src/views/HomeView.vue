@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import draggable from 'vuedraggable';
 import CaseEditorModal from '@/components/CaseEditorModal.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EntityFormDialog from '@/components/EntityFormDialog.vue';
@@ -28,6 +29,7 @@ import {
   fetchSuites,
   moveCaseToSuite,
   moveStepBetweenCases,
+  reorderCasesInSection,
   runAssigneeSelectOptions,
   updateProject,
   updateSection,
@@ -114,6 +116,70 @@ const newSuiteName = ref('');
 const newSectionName = ref('');
 const newSectionPrecondition = ref('');
 const newCaseTitle = ref('');
+
+/** When set, the next “Add test case” inserts before/after this case in its section. */
+const caseInsertAnchor = ref<{ caseId: number; title: string; position: 'before' | 'after' } | null>(null);
+
+/** Drag-reorder list for the active section (synced from loaded cases). */
+const sectionCasesOrder = ref<TestCase[]>([]);
+const caseReorderBusy = ref(false);
+
+function applyLocalCaseOrder(ordered: TestCase[]) {
+  ordered.forEach((c, index) => {
+    const row = cases.value.find((x) => x.id === c.id);
+    if (row) {
+      row.sort_order = index;
+    }
+  });
+}
+
+async function onCaseListReordered() {
+  const sid = selectedSuiteId.value;
+  const secId = selectedExplorerSectionId.value;
+  if (!sid || secId == null || sectionCasesOrder.value.length < 2) {
+    return;
+  }
+  const orderedIds = sectionCasesOrder.value.map((c) => c.id);
+  const previousIds =
+    activeExplorerSectionGroup.value?.cases.map((c) => c.id) ?? [];
+  if (orderedIds.join(',') === previousIds.join(',')) {
+    return;
+  }
+  const previous = activeExplorerSectionGroup.value ? [...activeExplorerSectionGroup.value.cases] : [];
+  caseReorderBusy.value = true;
+  error.value = null;
+  applyLocalCaseOrder(sectionCasesOrder.value);
+  try {
+    await reorderCasesInSection(sid, secId, orderedIds);
+  } catch (e) {
+    sectionCasesOrder.value = [...previous];
+    applyLocalCaseOrder(previous);
+    error.value = e instanceof Error ? e.message : 'Could not reorder cases';
+  } finally {
+    caseReorderBusy.value = false;
+  }
+}
+
+async function moveCaseInSection(c: TestCase, direction: -1 | 1) {
+  if (sectionCasesOrder.value.length === 0) {
+    syncSectionCasesOrderFromExplorer();
+  }
+  const list = sectionCasesOrder.value;
+  const idx = list.findIndex((x) => x.id === c.id);
+  if (idx < 0) {
+    return;
+  }
+  const target = idx + direction;
+  if (target < 0 || target >= list.length) {
+    return;
+  }
+  const next = [...list];
+  const tmp = next[idx]!;
+  next[idx] = next[target]!;
+  next[target] = tmp;
+  sectionCasesOrder.value = next;
+  await onCaseListReordered();
+}
 
 /** Runs for Explorer counts: loaded per selected project, non-blocking. */
 const explorerRuns = ref<RunSummary[]>([]);
@@ -233,6 +299,14 @@ const explorerSectionGroups = computed((): { section: Section; cases: TestCase[]
   for (const s of sections.value) {
     map.set(s.id, { section: s, cases: [] });
   }
+  const caseOrder = (a: TestCase, b: TestCase) => {
+    const ao = a.sort_order ?? 0;
+    const bo = b.sort_order ?? 0;
+    if (ao !== bo) {
+      return ao - bo;
+    }
+    return a.id - b.id;
+  };
   for (const c of cases.value) {
     const existing = map.get(c.section_id);
     if (existing) {
@@ -271,6 +345,9 @@ const explorerSectionGroups = computed((): { section: Section; cases: TestCase[]
       out.push(g);
     }
   }
+  for (const g of out) {
+    g.cases.sort(caseOrder);
+  }
   return out;
 });
 
@@ -286,6 +363,25 @@ const selectedExplorerSectionId = ref<number | null>(null);
 const activeExplorerSectionGroup = computed(
   () => explorerSectionGroups.value.find((g) => g.section.id === selectedExplorerSectionId.value) ?? null,
 );
+
+function syncSectionCasesOrderFromExplorer() {
+  const g = activeExplorerSectionGroup.value;
+  sectionCasesOrder.value = g ? [...g.cases] : [];
+}
+
+watch(
+  activeExplorerSectionGroup,
+  () => {
+    if (!caseReorderBusy.value) {
+      syncSectionCasesOrderFromExplorer();
+    }
+  },
+  { immediate: true, deep: true },
+);
+
+watch(selectedSuiteId, () => {
+  caseInsertAnchor.value = null;
+});
 
 watch([selectedSuiteId, explorerSectionGroups], () => {
   const groups = explorerSectionGroups.value;
@@ -372,15 +468,25 @@ async function addSuite() {
   }
 }
 
+function clearCaseInsertAnchor() {
+  caseInsertAnchor.value = null;
+}
+
+function setCaseInsertAnchor(c: TestCase, position: 'before' | 'after') {
+  caseInsertAnchor.value = { caseId: c.id, title: c.title, position };
+  selectedExplorerSectionId.value = c.section_id;
+}
+
 async function addCase() {
   const sid = selectedSuiteId.value;
   const title = newCaseTitle.value.trim();
   if (!sid || !title) {
     return;
   }
+  const anchor = caseInsertAnchor.value;
   error.value = null;
   try {
-    await createCase(sid, {
+    const body: Parameters<typeof createCase>[1] = {
       title,
       steps: [
         { action: 'Arrange', expected: 'Preconditions met' },
@@ -390,8 +496,15 @@ async function addCase() {
       priority: 'medium',
       status: 'ready',
       section_id: selectedExplorerSectionId.value ?? sections.value[0]?.id,
-    });
+    };
+    if (anchor?.position === 'before') {
+      body.before_case_id = anchor.caseId;
+    } else if (anchor?.position === 'after') {
+      body.after_case_id = anchor.caseId;
+    }
+    await createCase(sid, body);
     newCaseTitle.value = '';
+    caseInsertAnchor.value = null;
     await loadCases(sid);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not create case';
@@ -1259,13 +1372,24 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
         <p class="hint" v-else-if="projectCtx.projectId !== null">Select a suite in the tree to view cases.</p>
         <p class="hint" v-else>Select a project in the top bar to view cases.</p>
       </div>
-      <form v-if="canWrite" class="inline form-with-icon" @submit.prevent="addCase">
-        <input v-model="newCaseTitle" class="input" type="text" placeholder="New test case title" :disabled="!selectedSuite" />
+      <form v-if="canWrite" class="inline form-with-icon case-add-form" @submit.prevent="addCase">
+        <input
+          v-model="newCaseTitle"
+          class="input"
+          type="text"
+          placeholder="New test case title"
+          :disabled="!selectedSuite"
+        />
+        <p v-if="caseInsertAnchor" class="case-insert-hint">
+          Will insert {{ caseInsertAnchor.position === 'before' ? 'before' : 'after' }}
+          “{{ caseInsertAnchor.title }}”.
+          <button type="button" class="linkish" @click="clearCaseInsertAnchor">Clear</button>
+        </p>
         <IconButton
           type="submit"
           accent
-          label="Add test case"
-          title="Add test case to this suite"
+          :label="caseInsertAnchor ? 'Add test case at position' : 'Add test case'"
+          :title="caseInsertAnchor ? 'Add test case at chosen position' : 'Add test case at end of section'"
           :disabled="!selectedSuite"
         >
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
@@ -1305,9 +1429,11 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
             <div v-if="showSectionHeadings">
               <h3>{{ activeExplorerSectionGroup.section.name }}</h3>
               <p v-if="activeExplorerSectionGroup.section.precondition">{{ activeExplorerSectionGroup.section.precondition }}</p>
+              <p v-if="canWrite && sectionCasesOrder.length > 1" class="reorder-hint muted sm">Drag cases by ⠿ to reorder.</p>
             </div>
             <div v-else class="section-head-placeholder">
               <span class="muted sm">Cases in this section</span>
+              <span v-if="canWrite && sectionCasesOrder.length > 1" class="reorder-hint muted sm"> · Drag ⠿ to reorder</span>
             </div>
             <div v-if="canWrite" class="section-head-actions">
               <div class="section-bulk" role="group" aria-label="Section bulk status">
@@ -1328,14 +1454,33 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
               <button type="button" class="btn sm" @click="startEditSection(activeExplorerSectionGroup.section)">Edit section</button>
             </div>
           </header>
+        <draggable
+          :key="'section-cases-' + activeExplorerSectionGroup.section.id"
+          v-model="sectionCasesOrder"
+          item-key="id"
+          handle=".case-drag"
+          class="case-draggable-list"
+          :animation="180"
+          :disabled="!canWrite || caseReorderBusy"
+          @end="onCaseListReordered"
+        >
+          <template #item="{ element: c, index: caseIndex }">
         <article
-          v-for="c in activeExplorerSectionGroup.cases"
           :id="'case-' + c.id"
-          :key="c.id"
           class="case"
+          :class="{ 'case-insert-target': caseInsertAnchor?.caseId === c.id }"
         >
           <header class="case-head">
             <div class="case-title-row">
+              <button
+                v-if="canWrite"
+                type="button"
+                class="case-drag"
+                title="Drag to reorder"
+                aria-label="Drag to reorder"
+              >
+                ⠿
+              </button>
               <input
                 v-if="canWrite"
                 class="bulk-case-check"
@@ -1352,6 +1497,26 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                 <span class="chip chip-status" :class="'chip-status--' + c.status">{{ c.status }}</span>
               </div>
               <div v-if="canWrite" class="case-actions">
+                <IconButton
+                  label="Move case up"
+                  title="Move case up"
+                  :disabled="caseIndex === 0 || caseReorderBusy"
+                  @click="moveCaseInSection(c, -1)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5l-7 7h14l-7-7z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                </IconButton>
+                <IconButton
+                  label="Move case down"
+                  title="Move case down"
+                  :disabled="caseIndex >= sectionCasesOrder.length - 1 || caseReorderBusy"
+                  @click="moveCaseInSection(c, 1)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 19l-7-7h14l7 7z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                </IconButton>
                 <select
                   class="input sm case-move select-subtle"
                   aria-label="Move case to another suite"
@@ -1361,6 +1526,24 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
                   <option value="">Move to suite…</option>
                   <option v-for="s in otherSuites" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
                 </select>
+                <IconButton
+                  label="Add new case before this one"
+                  title="Add new case before this one"
+                  @click="setCaseInsertAnchor(c, 'before')"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 4v8M8 8l4-4 4 4M5 20h14" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                </IconButton>
+                <IconButton
+                  label="Add new case after this one"
+                  title="Add new case after this one"
+                  @click="setCaseInsertAnchor(c, 'after')"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20V12M8 16l4 4 4-4M5 4h14" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                </IconButton>
                 <IconButton label="Edit test case" title="Edit test case" @click="openEditor(c)">
                   <svg viewBox="0 0 24 24">
                     <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" fill="none" />
@@ -1417,6 +1600,8 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
             </li>
           </ol>
         </article>
+          </template>
+        </draggable>
         </section>
         </div>
       </div>
@@ -1738,6 +1923,43 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
   gap: 0.75rem;
 }
 
+.case-draggable-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.reorder-hint {
+  margin: 0.2rem 0 0;
+}
+
+.case-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.case-drag {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  padding: 0.15rem 0.35rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: grab;
+}
+
+.case-drag:active {
+  cursor: grabbing;
+}
+
+.case-drag:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+
 .case-section {
   display: grid;
   gap: 0.65rem;
@@ -1795,12 +2017,6 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
   font-size: 0.85rem;
   font-weight: 600;
   margin-right: 0.25rem;
-}
-
-.case-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.45rem;
 }
 
 .bulk-case-check {
@@ -1949,6 +2165,35 @@ function askSectionBulkStatus(section: Section, status: CaseWorkflowStatus) {
 
 .step-expected {
   margin-top: 0.15rem;
+}
+
+.case-insert-target {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+.case-add-form {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.case-insert-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.linkish {
+  margin-left: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .variants-read {

@@ -289,8 +289,8 @@ final class SuiteController
         $sections = $sectionsStmt->fetchAll(PDO::FETCH_ASSOC);
 
         $casesStmt = $this->pdo->prepare(
-            'SELECT id, section_id, title, precondition, priority, status
-             FROM test_cases WHERE suite_id = :sid ORDER BY id ASC'
+            'SELECT id, section_id, title, precondition, priority, status, sort_order
+             FROM test_cases WHERE suite_id = :sid ORDER BY section_id ASC, sort_order ASC, id ASC'
         );
         $casesStmt->execute(['sid' => $suiteId]);
         $cases = $casesStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -324,8 +324,8 @@ final class SuiteController
             }
 
             $insCase = $this->pdo->prepare(
-                'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status)
-                 VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status)'
+                'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order)
+                 VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status, :sort_order)'
             );
             foreach ($cases as $c) {
                 $oldCaseId = (int) $c['id'];
@@ -336,6 +336,7 @@ final class SuiteController
                     'precondition' => $c['precondition'],
                     'priority' => $c['priority'],
                     'status' => $c['status'],
+                    'sort_order' => (int) ($c['sort_order'] ?? 0),
                 ]);
                 $newCaseId = (int) $this->pdo->lastInsertId();
                 $steps = TestCaseStepsService::loadStepsForCase($this->pdo, $oldCaseId);

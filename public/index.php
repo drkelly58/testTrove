@@ -136,8 +136,8 @@ try {
             $pdo->exec("INSERT INTO test_sections (suite_id, name, sort_order) VALUES ($sid, 'Default', 0)");
             $sectionId = (int) $pdo->lastInsertId();
             $pdo->exec(
-                "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status)
-                 VALUES ($sid, $sectionId, 'User can sign in', NULL, 'high', 'ready')"
+                "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order)
+                 VALUES ($sid, $sectionId, 'User can sign in', NULL, 'high', 'ready', 0)"
             );
             $caseId = (int) $pdo->lastInsertId();
             \App\Services\TestCaseStepsService::replaceCaseSteps($pdo, $caseId, [
@@ -252,6 +252,7 @@ try {
     
     $app->get('/api/suites/{suiteId}/cases/export', [$cases, 'export']);
     $app->post('/api/suites/{suiteId}/cases/import', [$cases, 'import']);
+    $app->patch('/api/suites/{suiteId}/sections/{sectionId}/cases/reorder', [$cases, 'reorderCasesInSection']);
     $app->patch('/api/suites/{suiteId}/cases/bulk-status', [$cases, 'bulkSetStatus']);
     $app->post('/api/suites/{suiteId}/cases/{caseId}/move', [$cases, 'moveCase']);
     $app->post('/api/suites/{suiteId}/cases/{caseId}/steps/move', [$cases, 'moveStep']);

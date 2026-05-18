@@ -58,11 +58,11 @@ $pdo->exec(
 $runId = (int) $pdo->lastInsertId();
 
 $pdo->exec(
-    "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status) VALUES ($suiteId, $sectionId, 'C1', NULL, 'medium', 'draft')"
+    "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order) VALUES ($suiteId, $sectionId, 'C1', NULL, 'medium', 'draft', 0)"
 );
 $case1 = (int) $pdo->lastInsertId();
 $pdo->exec(
-    "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status) VALUES ($suiteId, $sectionId, 'C2', NULL, 'medium', 'ready')"
+    "INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order) VALUES ($suiteId, $sectionId, 'C2', NULL, 'medium', 'ready', 1)"
 );
 $case2 = (int) $pdo->lastInsertId();
 
@@ -261,6 +261,21 @@ $assert(
     && ($j['data']['unknown_case_ids'] ?? []) === [888888],
     'bulk-status partial unknown case_ids',
 );
+
+// l. Reorder cases within section
+$req = $reqFactory->createServerRequest('PATCH', "/api/suites/{$suiteId}/sections/{$sectionId}/cases/reorder")
+    ->withHeader('Content-Type', 'application/json')
+    ->withBody($body(json_encode(['case_ids' => [$case2, $case1]], JSON_THROW_ON_ERROR)));
+$res = $casesCtl->reorderCasesInSection($req, $responseFactory->createResponse(), [
+    'suiteId' => (string) $suiteId,
+    'sectionId' => (string) $sectionId,
+]);
+$assert($res->getStatusCode() === 200, 'reorder cases in section 200');
+$orderStmt = $pdo->query(
+    "SELECT id FROM test_cases WHERE section_id = {$sectionId} ORDER BY sort_order ASC, id ASC"
+);
+$order = array_map('intval', $orderStmt->fetchAll(PDO::FETCH_COLUMN));
+$assert($order === [$case2, $case1], 'reorder cases persisted');
 
 fwrite(STDOUT, "SUMMARY pass={$pass} fail={$fail}\n");
 exit($fail > 0 ? 1 : 0);

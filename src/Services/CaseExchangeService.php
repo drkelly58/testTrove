@@ -785,12 +785,14 @@ final class CaseExchangeService
 
         $check = $pdo->prepare('SELECT 1 FROM test_cases WHERE suite_id = :sid AND title = :t LIMIT 1');
         $ins = $pdo->prepare(
-            'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status)
-             VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status)'
+            'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order)
+             VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status, :sort_order)'
         );
 
         $imported = 0;
         $skipped = 0;
+        /** @var array<int, int> */
+        $nextOrderBySection = [];
         foreach ($cases as $c) {
             $title = $c['title'];
             if ($mode !== 'allow') {
@@ -814,6 +816,11 @@ final class CaseExchangeService
                 $c['section_precondition'] ?? null,
                 $createMissingSections
             );
+            if (!isset($nextOrderBySection[$sectionId])) {
+                $nextOrderBySection[$sectionId] = TestCaseOrderService::nextSortOrder($pdo, $sectionId);
+            }
+            $sortOrder = $nextOrderBySection[$sectionId];
+            $nextOrderBySection[$sectionId] = $sortOrder + 1;
             $ins->execute([
                 'suite_id' => $suiteId,
                 'section_id' => $sectionId,
@@ -821,6 +828,7 @@ final class CaseExchangeService
                 'precondition' => $c['precondition'],
                 'priority' => $c['priority'],
                 'status' => $c['status'],
+                'sort_order' => $sortOrder,
             ]);
             $caseId = (int) $pdo->lastInsertId();
             TestCaseStepsService::replaceCaseSteps($pdo, $caseId, $c['steps']);

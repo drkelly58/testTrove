@@ -564,7 +564,7 @@ final class WorkspaceExchangeController
              FROM test_cases c
              INNER JOIN test_sections s ON s.id = c.section_id
              WHERE c.suite_id = :sid
-             ORDER BY s.id ASC, c.id ASC'
+             ORDER BY s.sort_order ASC, s.id ASC, c.sort_order ASC, c.id ASC'
         );
         $stmt->execute(['sid' => $suiteId]);
         $rows = $stmt->fetchAll();

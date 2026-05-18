@@ -68,6 +68,7 @@ export type TestCase = {
   steps: TestStep[];
   priority: string;
   status: string;
+  sort_order?: number;
   created_at: string;
   updated_at: string;
 };
@@ -720,12 +721,32 @@ export function canOpenRunSession(state: string): boolean {
   return state === 'open' || state === 'complete';
 }
 
+export async function reorderCasesInSection(
+  suiteId: number,
+  sectionId: number,
+  caseIds: number[],
+): Promise<{ section_id: number; case_ids: number[] }> {
+  const res = await apiFetch(
+    `${base}/api/suites/${suiteId}/sections/${sectionId}/cases/reorder`,
+    {
+      method: 'PATCH',
+      headers: jsonWriteHeaders,
+      body: JSON.stringify({ case_ids: caseIds }),
+    },
+  );
+  const data = await parseJson<{ data: { section_id: number; case_ids: number[] } }>(res);
+  return data.data;
+}
+
 export async function createCase(
   suiteId: number,
   payload: {
     title: string;
     section_id?: number;
     section_name?: string;
+    before_case_id?: number;
+    after_case_id?: number;
+    sort_order?: number;
     steps: TestStep[];
     precondition?: string | null;
     priority?: string;
