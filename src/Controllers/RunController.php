@@ -160,7 +160,7 @@ final class RunController
              FROM test_cases c
              INNER JOIN test_sections s ON s.id = c.section_id
              WHERE c.suite_id = :sid
-             ORDER BY s.id ASC, c.id ASC'
+             ORDER BY s.sort_order ASC, s.id ASC, c.sort_order ASC, c.id ASC'
         );
         $caseStmt->execute(['sid' => $suiteId]);
         $caseIds = $caseStmt->fetchAll(PDO::FETCH_COLUMN);
@@ -283,7 +283,7 @@ final class RunController
             'SELECT c.id
              FROM test_cases c
              WHERE c.section_id = :sec
-             ORDER BY c.id ASC'
+             ORDER BY c.sort_order ASC, c.id ASC'
         );
         $caseStmt->execute(['sec' => $sectionId]);
         $caseIds = $caseStmt->fetchAll(PDO::FETCH_COLUMN);
@@ -381,7 +381,7 @@ final class RunController
              INNER JOIN test_cases c ON c.id = i.case_id
              INNER JOIN test_sections s ON s.id = c.section_id
              WHERE i.run_id = :rid
-             ORDER BY s.id ASC, c.id ASC'
+             ORDER BY s.sort_order ASC, s.id ASC, c.sort_order ASC, c.id ASC'
         );
         $itemsStmt->execute(['rid' => $runId]);
         $items = $itemsStmt->fetchAll();

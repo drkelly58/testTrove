@@ -10,6 +10,7 @@ use App\JsonResponse;
 use App\Services\AuthorizationService;
 use App\Services\CaseExchangeService;
 use App\Services\ProjectScopeResolver;
+use App\Services\TestCaseOrderService;
 use App\Services\TestCaseStepsService;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
@@ -71,26 +72,41 @@ final class CaseController
         }
         try {
             $sectionId = $this->resolveSectionForCreate($suiteId, $data);
+            [$sectionId, $sortOrder, $shiftFrom] = $this->resolveCaseInsertPosition($suiteId, $sectionId, $data);
         } catch (\InvalidArgumentException $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }
 
-        $stmt = $this->pdo->prepare(
-            'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status)
-             VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status)'
-        );
-        $stmt->execute([
-            'suite_id' => $suiteId,
-            'section_id' => $sectionId,
-            'title' => $title,
-            'precondition' => $precondition,
-            'priority' => $priority,
-            'status' => $status,
-        ]);
-        $id = (int) $this->pdo->lastInsertId();
-        TestCaseStepsService::replaceCaseSteps($this->pdo, $id, $steps);
+        try {
+            $this->pdo->beginTransaction();
+            if ($shiftFrom !== null) {
+                TestCaseOrderService::bumpSortOrdersFrom($this->pdo, $sectionId, $shiftFrom);
+            }
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order)
+                 VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status, :sort_order)'
+            );
+            $stmt->execute([
+                'suite_id' => $suiteId,
+                'section_id' => $sectionId,
+                'title' => $title,
+                'precondition' => $precondition,
+                'priority' => $priority,
+                'status' => $status,
+                'sort_order' => $sortOrder,
+            ]);
+            $id = (int) $this->pdo->lastInsertId();
+            TestCaseStepsService::replaceCaseSteps($this->pdo, $id, $steps);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
 
-        return JsonResponse::encode($response, ['data' => ['id' => $id, 'suite_id' => $suiteId, 'section_id' => $sectionId, 'title' => $title]], 201);
+            return JsonResponse::error('Create failed: ' . $e->getMessage(), 500);
+        }
+
+        return JsonResponse::encode($response, ['data' => ['id' => $id, 'suite_id' => $suiteId, 'section_id' => $sectionId, 'title' => $title, 'sort_order' => $sortOrder]], 201);
     }
 
     public function export(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -404,6 +420,84 @@ final class CaseController
     }
 
     /**
+     * PATCH /api/suites/{suiteId}/sections/{sectionId}/cases/reorder
+     *
+     * Body: { "case_ids": number[] } — every case in the section, in the desired order.
+     */
+    public function reorderCasesInSection(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $suiteId = (int) ($args['suiteId'] ?? 0);
+        $sectionId = (int) ($args['sectionId'] ?? 0);
+        if ($denied = $this->authorizeSuiteWrite($suiteId)) {
+            return $denied;
+        }
+        if (!$this->suiteExists($suiteId)) {
+            return JsonResponse::error('suite not found', 404);
+        }
+        if (!$this->sectionInSuite($sectionId, $suiteId)) {
+            return JsonResponse::error('section not found', 404);
+        }
+
+        try {
+            $data = JsonRequestBody::decodeAssoc($request);
+        } catch (\JsonException $e) {
+            return JsonResponse::error('Invalid JSON: ' . $e->getMessage(), 422);
+        }
+
+        $rawIds = $data['case_ids'] ?? null;
+        if (!is_array($rawIds)) {
+            return JsonResponse::error('case_ids must be an array', 422);
+        }
+
+        $orderedIds = [];
+        $seen = [];
+        foreach ($rawIds as $id) {
+            $cid = (int) $id;
+            if ($cid <= 0 || isset($seen[$cid])) {
+                continue;
+            }
+            $seen[$cid] = true;
+            $orderedIds[] = $cid;
+        }
+
+        $currentIds = TestCaseOrderService::listCaseIdsInSection($this->pdo, $suiteId, $sectionId);
+        if ($currentIds === [] && $orderedIds === []) {
+            return JsonResponse::encode($response, ['data' => ['section_id' => $sectionId, 'case_ids' => []]]);
+        }
+        if ($orderedIds === []) {
+            return JsonResponse::error('case_ids must list every case in the section', 422);
+        }
+
+        $expected = $currentIds;
+        sort($expected);
+        $given = $orderedIds;
+        sort($given);
+        if ($expected !== $given) {
+            return JsonResponse::error('case_ids must include every case in this section exactly once', 422);
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+            TestCaseOrderService::applyOrder($this->pdo, $sectionId, $orderedIds);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            return JsonResponse::error('Reorder failed: ' . $e->getMessage(), 500);
+        }
+
+        return JsonResponse::encode($response, [
+            'data' => [
+                'suite_id' => $suiteId,
+                'section_id' => $sectionId,
+                'case_ids' => $orderedIds,
+            ],
+        ]);
+    }
+
+    /**
      * PATCH /api/suites/{suiteId}/cases/bulk-status
      *
      * Body (exactly one scope): { "status": "draft"|"ready"|"deprecated", "case_ids": number[] }
@@ -451,7 +545,9 @@ final class CaseController
             if (!$this->sectionInSuite($sectionId, $suiteId)) {
                 return JsonResponse::error('section_id must belong to this suite', 422);
             }
-            $stmt = $this->pdo->prepare('SELECT id FROM test_cases WHERE suite_id = :sid AND section_id = :sec ORDER BY id ASC');
+            $stmt = $this->pdo->prepare(
+                'SELECT id FROM test_cases WHERE suite_id = :sid AND section_id = :sec ORDER BY sort_order ASC, id ASC'
+            );
             $stmt->execute(['sid' => $suiteId, 'sec' => $sectionId]);
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 $targetCaseIds[] = (int) $r['id'];
@@ -950,7 +1046,8 @@ final class CaseController
         }
 
         $stmt = $this->pdo->prepare(
-            'SELECT section_id, title, precondition, priority, status FROM test_cases WHERE id = :id AND suite_id = :sid LIMIT 1'
+            'SELECT section_id, title, precondition, priority, status, sort_order
+             FROM test_cases WHERE id = :id AND suite_id = :sid LIMIT 1'
         );
         $stmt->execute(['id' => $caseId, 'sid' => $suiteId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -959,21 +1056,36 @@ final class CaseController
         }
 
         $title = 'Copy of ' . (string) $row['title'];
-        $insert = $this->pdo->prepare(
-            'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status)
-             VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status)'
-        );
-        $insert->execute([
-            'suite_id' => $suiteId,
-            'section_id' => (int) $row['section_id'],
-            'title' => $title,
-            'precondition' => $row['precondition'],
-            'priority' => $row['priority'],
-            'status' => $row['status'],
-        ]);
-        $newId = (int) $this->pdo->lastInsertId();
-        $steps = TestCaseStepsService::loadStepsForCase($this->pdo, $caseId);
-        TestCaseStepsService::replaceCaseSteps($this->pdo, $newId, $steps);
+        $sectionId = (int) $row['section_id'];
+        $sortOrder = (int) $row['sort_order'] + 1;
+
+        try {
+            $this->pdo->beginTransaction();
+            TestCaseOrderService::bumpSortOrdersFrom($this->pdo, $sectionId, $sortOrder);
+            $insert = $this->pdo->prepare(
+                'INSERT INTO test_cases (suite_id, section_id, title, precondition, priority, status, sort_order)
+                 VALUES (:suite_id, :section_id, :title, :precondition, :priority, :status, :sort_order)'
+            );
+            $insert->execute([
+                'suite_id' => $suiteId,
+                'section_id' => $sectionId,
+                'title' => $title,
+                'precondition' => $row['precondition'],
+                'priority' => $row['priority'],
+                'status' => $row['status'],
+                'sort_order' => $sortOrder,
+            ]);
+            $newId = (int) $this->pdo->lastInsertId();
+            $steps = TestCaseStepsService::loadStepsForCase($this->pdo, $caseId);
+            TestCaseStepsService::replaceCaseSteps($this->pdo, $newId, $steps);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            return JsonResponse::error('Duplicate failed: ' . $e->getMessage(), 500);
+        }
 
         return JsonResponse::encode($response, ['data' => ['id' => $newId, 'suite_id' => $suiteId, 'title' => $title]], 201);
     }
@@ -1064,6 +1176,46 @@ final class CaseController
         return $this->findOrCreateSectionByName($suiteId, 'Default', null);
     }
 
+    /**
+     * @param array<string, mixed> $data
+     * @return array{0: int, 1: int, 2: int|null} section_id, sort_order, shift_from (or null)
+     */
+    private function resolveCaseInsertPosition(int $suiteId, int $sectionId, array $data): array
+    {
+        $beforeId = isset($data['before_case_id']) ? (int) $data['before_case_id'] : 0;
+        $afterId = isset($data['after_case_id']) ? (int) $data['after_case_id'] : 0;
+        if ($beforeId > 0 && $afterId > 0) {
+            throw new \InvalidArgumentException('Provide only one of before_case_id or after_case_id');
+        }
+
+        if ($beforeId > 0) {
+            $anchor = TestCaseOrderService::anchorRow($this->pdo, $beforeId, $suiteId);
+            if ($anchor === null) {
+                throw new \InvalidArgumentException('before_case_id not found in this suite');
+            }
+
+            return [$anchor['section_id'], $anchor['sort_order'], $anchor['sort_order']];
+        }
+
+        if ($afterId > 0) {
+            $anchor = TestCaseOrderService::anchorRow($this->pdo, $afterId, $suiteId);
+            if ($anchor === null) {
+                throw new \InvalidArgumentException('after_case_id not found in this suite');
+            }
+            $pos = $anchor['sort_order'] + 1;
+
+            return [$anchor['section_id'], $pos, $pos];
+        }
+
+        if (array_key_exists('sort_order', $data)) {
+            $pos = max(0, (int) $data['sort_order']);
+
+            return [$sectionId, $pos, $pos];
+        }
+
+        return [$sectionId, TestCaseOrderService::nextSortOrder($this->pdo, $sectionId), null];
+    }
+
     private function findOrCreateSectionByName(int $suiteId, string $name, ?string $precondition): int
     {
         $stmt = $this->pdo->prepare(
@@ -1101,11 +1253,11 @@ final class CaseController
     {
         $stmt = $this->pdo->prepare(
             'SELECT c.id, c.suite_id, c.section_id, s.name AS section_name, s.precondition AS section_precondition,
-                    c.title, c.precondition, c.priority, c.status, c.created_at, c.updated_at
+                    c.title, c.precondition, c.priority, c.status, c.sort_order, c.created_at, c.updated_at
              FROM test_cases c
              INNER JOIN test_sections s ON s.id = c.section_id
              WHERE c.suite_id = :sid
-             ORDER BY s.id ASC, c.id ASC'
+             ORDER BY s.sort_order ASC, s.id ASC, c.sort_order ASC, c.id ASC'
         );
         $stmt->execute(['sid' => $suiteId]);
         $rows = $stmt->fetchAll();
