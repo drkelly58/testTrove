@@ -1105,3 +1105,75 @@ export async function deleteUser(userId: number): Promise<void> {
   const res = await apiFetch(`${base}/api/users/${userId}`, { method: 'DELETE' });
   await parseJson<{ data: { id: number; deleted: boolean } }>(res);
 }
+
+export type AdminSettingsForm = {
+  app_base_url: string;
+  mail_enabled: boolean;
+  mail_from_address: string;
+  mail_from_name: string;
+  mail_transport: 'php' | 'smtp';
+  mail_smtp_host: string;
+  mail_smtp_port: number;
+  mail_smtp_user: string;
+  mail_smtp_encryption: '' | 'tls' | 'ssl';
+  mail_invite_subject: string;
+  mail_invite_intro: string;
+};
+
+export type AdminSettingsSnapshot = {
+  general: {
+    app_base_url: string;
+    app_base_url_override: string | null;
+    app_env: string;
+    db_driver: string;
+  };
+  auth: {
+    auth_required: boolean;
+    local_login_enabled: boolean;
+    providers: { id: string; label: string }[];
+  };
+  mail: {
+    enabled: boolean;
+    transport: string;
+    from_address: string;
+    from_name: string;
+    smtp_host: string;
+    smtp_port: number;
+    smtp_user: string;
+    smtp_encryption: string;
+    smtp_password_configured: boolean;
+  };
+  invite_email: {
+    subject: string;
+    intro: string;
+  };
+  form: AdminSettingsForm;
+  sources: Record<string, 'database' | 'environment' | 'default'>;
+};
+
+export async function fetchAdminSettings(): Promise<AdminSettingsSnapshot> {
+  const res = await apiFetch(`${base}/api/admin/settings`);
+  const data = await parseJson<{ data: AdminSettingsSnapshot }>(res);
+  return data.data;
+}
+
+export async function patchAdminSettings(
+  patch: Partial<AdminSettingsForm>,
+): Promise<AdminSettingsSnapshot> {
+  const res = await apiFetch(`${base}/api/admin/settings`, {
+    method: 'PATCH',
+    headers: jsonWriteHeaders,
+    body: JSON.stringify(patch),
+  });
+  const data = await parseJson<{ data: AdminSettingsSnapshot }>(res);
+  return data.data;
+}
+
+export async function sendAdminTestMail(to: string): Promise<void> {
+  const res = await apiFetch(`${base}/api/admin/settings/test-mail`, {
+    method: 'POST',
+    headers: jsonWriteHeaders,
+    body: JSON.stringify({ to }),
+  });
+  await parseJson(res);
+}
